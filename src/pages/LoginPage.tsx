@@ -36,6 +36,8 @@ export function LoginPage() {
         if (needsConfirmation) {
           setInfo("Conta criada! Confirme o e-mail recebido para acessar.");
           setMode("login");
+        } else {
+          setInfo("Conta criada! Você já pode usar o sistema.");
         }
       }
     } catch (err) {

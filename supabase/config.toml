@@ -3,3 +3,6 @@ project_id = "financas-pj-app"
 
 [db]
 major_version = 17
+
+[auth.email]
+enable_confirmations = false

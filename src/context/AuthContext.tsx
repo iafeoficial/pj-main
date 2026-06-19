@@ -54,10 +54,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       async signUp(email, password) {
         if (!supabase) throw new Error("Supabase não configurado.");
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw new Error(error.message);
-        // Sem sessão imediata ⇒ confirmação de e-mail está habilitada no projeto.
-        return { needsConfirmation: !data.session };
+        const baseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+        const res = await fetch(`${baseUrl}/functions/v1/auth-register`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${anonKey}`,
+            apikey: anonKey,
+          },
+          body: JSON.stringify({ email, password }),
+        });
+
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          session?: { access_token: string; refresh_token: string };
+        };
+
+        if (!res.ok) {
+          throw new Error(body.error ?? "Erro ao criar conta.");
+        }
+
+        if (body.session) {
+          const { error } = await supabase.auth.setSession({
+            access_token: body.session.access_token,
+            refresh_token: body.session.refresh_token,
+          });
+          if (error) throw new Error(error.message);
+        }
+
+        return { needsConfirmation: false };
       },
       async signOut() {
         if (!supabase) return;
