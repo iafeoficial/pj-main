@@ -1,0 +1,37 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Build cache
+*.tsbuildinfo
+
+# Supabase CLI cache local
+supabase/.temp
+
+# Tarefas internas e config local do Claude Code
+TAREFAS*.md
+.claude/
+PROJETO_FINANCEIRO_PJ_MASTER.md

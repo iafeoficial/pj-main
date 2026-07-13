@@ -1,0 +1,305 @@
+import { useMemo, useRef, useState } from "react";
+import { Landmark, Upload, CheckCircle2, Ban, RotateCcw } from "lucide-react";
+import type { TransacaoBancaria } from "@/types/domain";
+import {
+  conciliacaoService,
+  sugerirConciliacao,
+  type Sugestao,
+} from "@/data/conciliacao";
+import { parseOFX } from "@/lib/ofx";
+import { useEmpresa } from "@/context/EmpresaContext";
+import { useAsyncData } from "@/hooks/useAsyncData";
+import { formatBRL, formatDate } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal } from "@/components/ui/Modal";
+import { RequireEmpresa } from "@/components/RequireEmpresa";
+import { useToast } from "@/components/ui/Toast";
+
+const STATUS_LABEL: Record<string, string> = {
+  pendente: "Pendente",
+  conciliada: "Conciliada",
+  ignorada: "Ignorada",
+};
+const STATUS_STYLE: Record<string, string> = {
+  pendente: "bg-amber-100 text-amber-700",
+  conciliada: "bg-emerald-100 text-emerald-700",
+  ignorada: "bg-zinc-200 text-zinc-600",
+};
+
+function Inner({ empresaId }: { empresaId: string }) {
+  const { version, bumpData } = useEmpresa();
+  const { notify } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const { data: transacoes } = useAsyncData(
+    () => conciliacaoService.listTransacoes(empresaId),
+    [empresaId, version],
+    [] as TransacaoBancaria[]
+  );
+  const [filtro, setFiltro] = useState<string>("pendente");
+
+  const [alvo, setAlvo] = useState<TransacaoBancaria | null>(null);
+  const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
+
+  const filtradas = useMemo(
+    () => (filtro === "todas" ? transacoes : transacoes.filter((t) => t.statusConciliacao === filtro)),
+    [transacoes, filtro]
+  );
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const ofx = parseOFX(text);
+      if (ofx.transacoes.length === 0) {
+        notify("Nenhuma transação encontrada no arquivo OFX.", "error");
+        return;
+      }
+      const resumo = await conciliacaoService.importarOFX(empresaId, ofx);
+      bumpData();
+      notify(
+        `Importadas ${resumo.importadas} transações${
+          resumo.duplicadas ? ` (${resumo.duplicadas} duplicadas ignoradas)` : ""
+        }.`
+      );
+    } catch (err) {
+      notify((err as Error).message || "Falha ao ler o arquivo OFX.", "error");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function abrirConciliacao(t: TransacaoBancaria) {
+    setAlvo(t);
+    setSugestoes([]);
+    try {
+      setSugestoes(await sugerirConciliacao(empresaId, t));
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  async function confirmar(s: Sugestao) {
+    if (!alvo) return;
+    try {
+      await conciliacaoService.conciliar(
+        empresaId,
+        alvo.id,
+        s.tipo === "receber" ? { contaReceberId: s.id } : { contaPagarId: s.id }
+      );
+      bumpData();
+      notify("Transação conciliada e baixa registrada.");
+      setAlvo(null);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  async function ignorar(t: TransacaoBancaria) {
+    try {
+      await conciliacaoService.ignorar(empresaId, t.id);
+      bumpData();
+      notify("Transação ignorada.");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  async function desfazer(t: TransacaoBancaria) {
+    try {
+      await conciliacaoService.desfazer(empresaId, t.id);
+      bumpData();
+      notify("Conciliação desfeita.");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  const STATUS_OPTS = ["pendente", "conciliada", "ignorada", "todas"];
+
+  return (
+    <>
+      <PageHeader
+        title="Conciliação Bancária"
+        subtitle="Importe o extrato (OFX) e concilie as transações com seus títulos — sempre com confirmação manual."
+        actions={
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".ofx,.qfx,text/plain"
+              className="hidden"
+              onChange={onFile}
+            />
+            <button className="btn-primary" onClick={() => fileRef.current?.click()}>
+              <Upload className="h-4 w-4" /> Importar OFX
+            </button>
+          </>
+        }
+      />
+
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {STATUS_OPTS.map((s) => (
+          <button
+            key={s}
+            onClick={() => setFiltro(s)}
+            className={`badge cursor-pointer capitalize ${
+              filtro === s
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            {s === "todas" ? "Todas" : STATUS_LABEL[s]}
+          </button>
+        ))}
+      </div>
+
+      {filtradas.length === 0 ? (
+        <EmptyState
+          icon={Landmark}
+          title="Nenhuma transação"
+          description="Importe um arquivo OFX do seu banco para iniciar a conciliação."
+          action={
+            <button className="btn-primary" onClick={() => fileRef.current?.click()}>
+              <Upload className="h-4 w-4" /> Importar OFX
+            </button>
+          }
+        />
+      ) : (
+        <div className="card overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Data</th>
+                <th className="px-4 py-2.5 font-medium">Descrição</th>
+                <th className="px-4 py-2.5 text-right font-medium">Valor</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 text-right font-medium">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {filtradas.map((t) => (
+                <tr key={t.id} className="hover:bg-muted/30">
+                  <td className="whitespace-nowrap px-4 py-3">{formatDate(t.data)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{t.descricao || "—"}</div>
+                    {t.documento && (
+                      <div className="text-xs text-muted-foreground">Doc: {t.documento}</div>
+                    )}
+                  </td>
+                  <td
+                    className={`px-4 py-3 text-right tabular-nums ${
+                      t.tipo === "credito" ? "text-emerald-600" : "text-red-600"
+                    }`}
+                  >
+                    {formatBRL(t.valor)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`badge ${STATUS_STYLE[t.statusConciliacao]}`}>
+                      {STATUS_LABEL[t.statusConciliacao]}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-1">
+                      {t.statusConciliacao === "pendente" && (
+                        <>
+                          <button
+                            className="btn-outline btn-sm"
+                            onClick={() => abrirConciliacao(t)}
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Conciliar
+                          </button>
+                          <button
+                            className="btn-ghost btn-sm text-muted-foreground"
+                            title="Ignorar"
+                            onClick={() => ignorar(t)}
+                          >
+                            <Ban className="h-4 w-4" />
+                          </button>
+                        </>
+                      )}
+                      {t.statusConciliacao !== "pendente" && (
+                        <button
+                          className="btn-ghost btn-sm"
+                          title="Desfazer"
+                          onClick={() => desfazer(t)}
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal
+        open={!!alvo}
+        title="Conciliar transação"
+        onClose={() => setAlvo(null)}
+        width="max-w-xl"
+      >
+        {alvo && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{formatDate(alvo.data)}</span>
+                <span className={alvo.tipo === "credito" ? "text-emerald-600" : "text-red-600"}>
+                  {formatBRL(alvo.valor)}
+                </span>
+              </div>
+              <div className="font-medium">{alvo.descricao || "—"}</div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-medium">
+                Sugestões ({alvo.tipo === "credito" ? "contas a receber" : "contas a pagar"})
+              </p>
+              {sugestoes.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  Nenhum título compatível encontrado. Verifique os lançamentos em aberto.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {sugestoes.map((s) => (
+                    <li
+                      key={`${s.tipo}-${s.id}`}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{s.pessoa}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Venc. {formatDate(s.dataVencimento)} · saldo {formatBRL(s.saldo)} · {s.motivo}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="badge bg-accent text-accent-foreground">
+                          {s.score}%
+                        </span>
+                        <button className="btn-primary btn-sm" onClick={() => confirmar(s)}>
+                          Confirmar
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A confirmação registra a baixa (pagamento/recebimento) no título vinculado.
+            </p>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+export function ConciliacaoPage() {
+  return <RequireEmpresa>{(id) => <Inner empresaId={id} />}</RequireEmpresa>;
+}

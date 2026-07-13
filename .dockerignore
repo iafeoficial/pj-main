@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.vscode
+.idea
+.claude
+TAREFAS*.md
+PROJETO_FINANCEIRO_PJ_MASTER.md
+supabase/.temp

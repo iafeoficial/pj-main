@@ -1,0 +1,8 @@
+# Configuração do Supabase CLI para o projeto financas_pj_app.
+project_id = "financas-pj-app"
+
+[db]
+major_version = 17
+
+[auth.email]
+enable_confirmations = false
