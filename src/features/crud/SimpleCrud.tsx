@@ -1,16 +1,18 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Pencil, Plus, Trash2, type LucideIcon } from "lucide-react";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useFormDraft } from "@/hooks/useFormDraft";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { formatCpfCnpj, formatTelefone, TELEFONE_PLACEHOLDER } from "@/lib/masks";
 
-type FieldType = "text" | "number" | "email" | "checkbox";
+type FieldType = "text" | "number" | "email" | "checkbox" | "cpfCnpj" | "telefone" | "textarea" | "select";
 type Row = Record<string, unknown> & { id: string };
 type FormValues = Record<string, string | number | boolean>;
 
@@ -21,6 +23,10 @@ export interface CrudFieldDef {
   required?: boolean;
   fullWidth?: boolean;
   default?: string | number | boolean;
+  section?: string;
+  hint?: string;
+  placeholder?: string;
+  options?: { value: string; label: string }[];
 }
 
 export interface CrudColumn {
@@ -35,9 +41,10 @@ export interface SimpleCrudConfig {
   subtitulo: string;
   icon: LucideIcon;
   singular: string;
-  nomeKey: string; // campo usado em mensagens de exclusão
+  nomeKey: string;
   fields: CrudFieldDef[];
   columns: CrudColumn[];
+  modalWidth?: string;
   service: {
     list: (empresaId: string) => Promise<Row[]>;
     create: (empresaId: string, data: Record<string, unknown>) => Promise<unknown>;
@@ -52,9 +59,22 @@ function emptyForm(fields: CrudFieldDef[]): FormValues {
   return f;
 }
 
+function maskFieldValue(type: FieldType, value: string): string {
+  if (type === "cpfCnpj") return formatCpfCnpj(value);
+  if (type === "telefone") return formatTelefone(value);
+  return value;
+}
+
+function SectionTitle({ children }: { children: string }) {
+  return (
+    <h3 className="border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">
+      {children}
+    </h3>
+  );
+}
+
 export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; empresaId: string }) {
   const { version, bumpData } = useEmpresa();
-  const { canWrite } = usePermissions();
   const { notify } = useToast();
   const { data: rows } = useAsyncData(() => config.service.list(empresaId), [empresaId, version], [] as Row[]);
 
@@ -64,18 +84,42 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
   const [error, setError] = useState("");
   const [toDelete, setToDelete] = useState<Row | null>(null);
 
+  const draftKey = config.singular.toLowerCase().replace(/\s+/g, "-");
+  const { clearDraft } = useFormDraft(
+    draftKey,
+    { open, form, editingId: editing?.id ?? null },
+    (draft) => {
+      setForm(draft.form);
+      setEditing(draft.editingId ? ({ id: draft.editingId } as Row) : null);
+      setOpen(true);
+      notify("Rascunho restaurado.", "info");
+    }
+  );
+
+  function closeModal() {
+    clearDraft();
+    setOpen(false);
+  }
+
   function openCreate() {
+    clearDraft();
     setEditing(null);
     setForm(emptyForm(config.fields));
     setError("");
     setOpen(true);
   }
   function openEdit(row: Row) {
+    clearDraft();
     setEditing(row);
     const f: FormValues = {};
     for (const fd of config.fields) {
       const v = row[fd.key];
-      f[fd.key] = fd.type === "checkbox" ? Boolean(v) : fd.type === "number" ? Number(v ?? 0) : String(v ?? "");
+      if (fd.type === "checkbox") f[fd.key] = Boolean(v);
+      else if (fd.type === "number") f[fd.key] = Number(v ?? 0);
+      else {
+        const raw = String(v ?? "");
+        f[fd.key] = fd.type === "cpfCnpj" || fd.type === "telefone" ? maskFieldValue(fd.type, raw) : raw;
+      }
     }
     setForm(f);
     setError("");
@@ -96,6 +140,7 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
         await config.service.create(empresaId, form);
         notify(`${config.singular} criado.`);
       }
+      clearDraft();
       bumpData();
       setOpen(false);
     } catch (e) {
@@ -116,6 +161,7 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
   }
 
   const Icon = config.icon;
+  let lastSection = "";
 
   return (
     <>
@@ -123,11 +169,9 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
         title={config.titulo}
         subtitle={config.subtitulo}
         actions={
-          canWrite ? (
-            <button className="btn-primary" onClick={openCreate}>
-              <Plus className="h-4 w-4" /> Novo
-            </button>
-          ) : undefined
+          <button className="btn-primary" onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Novo
+          </button>
         }
       />
 
@@ -137,11 +181,9 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
           title={`Nenhum ${config.singular.toLowerCase()}`}
           description="Cadastre o primeiro registro."
           action={
-            canWrite ? (
-              <button className="btn-primary" onClick={openCreate}>
-                <Plus className="h-4 w-4" /> Novo
-              </button>
-            ) : undefined
+            <button className="btn-primary" onClick={openCreate}>
+              <Plus className="h-4 w-4" /> Novo
+            </button>
           }
         />
       ) : (
@@ -166,16 +208,14 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
                     </td>
                   ))}
                   <td className="px-4 py-3">
-                    {canWrite && (
-                      <div className="flex justify-end gap-1">
-                        <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(row)}>
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button className="btn-ghost btn-sm btn-delete" title="Excluir" onClick={() => setToDelete(row)}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex justify-end gap-1">
+                      <button className="btn-ghost btn-sm" onClick={() => openEdit(row)}>
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button className="btn-ghost btn-sm text-destructive" onClick={() => setToDelete(row)}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -187,11 +227,11 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
       <Modal
         open={open}
         title={editing ? `Editar ${config.singular.toLowerCase()}` : `Novo ${config.singular.toLowerCase()}`}
-        onClose={() => setOpen(false)}
-        width="max-w-lg"
+        onClose={closeModal}
+        width={config.modalWidth ?? "max-w-lg"}
         footer={
           <>
-            <button className="btn-outline" onClick={() => setOpen(false)}>
+            <button className="btn-outline" onClick={closeModal}>
               Cancelar
             </button>
             <button className="btn-primary" onClick={save}>
@@ -201,36 +241,108 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {config.fields.map((fd) =>
-            fd.type === "checkbox" ? (
-              <label key={fd.key} className="flex items-center gap-2 text-sm sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={Boolean(form[fd.key])}
-                  onChange={(e) => setForm({ ...form, [fd.key]: e.target.checked })}
-                />
-                {fd.label}
-              </label>
-            ) : (
-              <Field
-                key={fd.key}
-                label={fd.label}
-                required={fd.required}
-                error={error && fd.required && !String(form[fd.key] ?? "").trim() ? error : undefined}
-                className={fd.fullWidth ? "sm:col-span-2" : undefined}
-              >
-                <input
-                  className="input"
-                  type={fd.type === "number" ? "number" : fd.type}
-                  step={fd.type === "number" ? "0.01" : undefined}
-                  value={String(form[fd.key] ?? "")}
-                  onChange={(e) =>
-                    setForm({ ...form, [fd.key]: fd.type === "number" ? Number(e.target.value) : e.target.value })
-                  }
-                />
-              </Field>
-            )
-          )}
+          {config.fields.map((fd) => {
+            const sectionEl =
+              fd.section && fd.section !== lastSection ? (
+                ((lastSection = fd.section), (<SectionTitle key={`sec-${fd.section}`}>{fd.section}</SectionTitle>))
+              ) : null;
+
+            if (fd.type === "checkbox") {
+              return (
+                <Fragment key={fd.key}>
+                  {sectionEl}
+                  <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form[fd.key])}
+                      onChange={(e) => setForm({ ...form, [fd.key]: e.target.checked })}
+                    />
+                    {fd.label}
+                  </label>
+                </Fragment>
+              );
+            }
+
+            if (fd.type === "textarea") {
+              return (
+                <Fragment key={fd.key}>
+                  {sectionEl}
+                  <Field
+                    label={fd.label}
+                    required={fd.required}
+                    error={error && fd.required && !String(form[fd.key] ?? "").trim() ? error : undefined}
+                    className={fd.fullWidth ? "sm:col-span-2" : undefined}
+                  >
+                    <textarea
+                      className="input min-h-[72px] resize-y"
+                      value={String(form[fd.key] ?? "")}
+                      onChange={(e) => setForm({ ...form, [fd.key]: e.target.value })}
+                    />
+                  </Field>
+                </Fragment>
+              );
+            }
+
+            if (fd.type === "select") {
+              const currentValue = String(form[fd.key] ?? "");
+              const baseOptions = fd.options ?? [];
+              const options =
+                currentValue && !baseOptions.some((o) => o.value === currentValue)
+                  ? [{ value: currentValue, label: `${currentValue} — (personalizado)` }, ...baseOptions]
+                  : baseOptions;
+
+              return (
+                <Fragment key={fd.key}>
+                  {sectionEl}
+                  <Field
+                    label={fd.label}
+                    required={fd.required}
+                    error={error && fd.required && !String(form[fd.key] ?? "").trim() ? error : undefined}
+                    className={fd.fullWidth ? "sm:col-span-2" : undefined}
+                  >
+                    <Select
+                      value={currentValue}
+                      onChange={(v) => setForm({ ...form, [fd.key]: v })}
+                      options={options}
+                      placeholder={fd.placeholder}
+                    />
+                    {fd.hint && <p className="text-xs text-muted-foreground">{fd.hint}</p>}
+                  </Field>
+                </Fragment>
+              );
+            }
+
+            return (
+              <Fragment key={fd.key}>
+                {sectionEl}
+                <Field
+                  label={fd.label}
+                  required={fd.required}
+                  error={error && fd.required && !String(form[fd.key] ?? "").trim() ? error : undefined}
+                  className={fd.fullWidth ? "sm:col-span-2" : undefined}
+                >
+                  <input
+                    className="input"
+                    type={fd.type === "number" ? "number" : fd.type === "email" ? "email" : "text"}
+                    inputMode={fd.type === "cpfCnpj" || fd.type === "telefone" ? "numeric" : undefined}
+                    step={fd.type === "number" ? "0.01" : undefined}
+                    placeholder={fd.type === "telefone" ? TELEFONE_PLACEHOLDER : undefined}
+                    value={String(form[fd.key] ?? "")}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const next =
+                        fd.type === "number"
+                          ? Number(raw)
+                          : fd.type === "cpfCnpj" || fd.type === "telefone"
+                            ? maskFieldValue(fd.type, raw)
+                            : raw;
+                      setForm({ ...form, [fd.key]: next });
+                    }}
+                  />
+                </Field>
+              </Fragment>
+            );
+          })}
         </div>
       </Modal>
 

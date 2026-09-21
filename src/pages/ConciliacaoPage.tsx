@@ -1,20 +1,25 @@
 import { useMemo, useRef, useState } from "react";
 import { Landmark, Upload, CheckCircle2, Ban, RotateCcw } from "lucide-react";
-import type { TransacaoBancaria } from "@/types/domain";
+import type { ExtratoBancario, RegraConciliacao, TransacaoBancaria } from "@/types/domain";
 import {
   conciliacaoService,
+  categoriaSugerida,
+  regraService,
   sugerirConciliacao,
   type Sugestao,
 } from "@/data/conciliacao";
+import { categoriaService } from "@/data/services";
 import { parseOFX } from "@/lib/ofx";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { formatBRL, formatDate } from "@/lib/utils";
+import { canWrite } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
+import { EntityLink } from "@/components/EntityLink";
 
 const STATUS_LABEL: Record<string, string> = {
   pendente: "Pendente",
@@ -28,7 +33,8 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 function Inner({ empresaId }: { empresaId: string }) {
-  const { version, bumpData } = useEmpresa();
+  const { version, bumpData, papel } = useEmpresa();
+  const readOnly = !canWrite(papel);
   const { notify } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -37,10 +43,36 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as TransacaoBancaria[]
   );
+  const { data: extratos } = useAsyncData(
+    () => conciliacaoService.listExtratos(empresaId),
+    [empresaId, version],
+    [] as ExtratoBancario[]
+  );
+  const { data: regras } = useAsyncData(
+    () => regraService.list(empresaId),
+    [empresaId, version],
+    [] as RegraConciliacao[]
+  );
+  const { data: categorias } = useAsyncData(
+    () => categoriaService.list(empresaId),
+    [empresaId, version],
+    []
+  );
+  const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
+
   const [filtro, setFiltro] = useState<string>("pendente");
 
   const [alvo, setAlvo] = useState<TransacaoBancaria | null>(null);
   const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
+  const [categoriaIdSugerida, setCategoriaIdSugerida] = useState<string | null>(null);
+
+  const extratoResumo = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of transacoes) {
+      if (t.extratoId) counts.set(t.extratoId, (counts.get(t.extratoId) ?? 0) + 1);
+    }
+    return extratos.map((e) => ({ ...e, qtdTransacoes: counts.get(e.id) ?? 0 }));
+  }, [extratos, transacoes]);
 
   const filtradas = useMemo(
     () => (filtro === "todas" ? transacoes : transacoes.filter((t) => t.statusConciliacao === filtro)),
@@ -74,6 +106,8 @@ function Inner({ empresaId }: { empresaId: string }) {
   async function abrirConciliacao(t: TransacaoBancaria) {
     setAlvo(t);
     setSugestoes([]);
+    const catId = categoriaSugerida(regras, t.tipo, t.descricao);
+    setCategoriaIdSugerida(catId);
     try {
       setSugestoes(await sugerirConciliacao(empresaId, t));
     } catch (e) {
@@ -125,20 +159,57 @@ function Inner({ empresaId }: { empresaId: string }) {
         title="Conciliação Bancária"
         subtitle="Importe o extrato (OFX) e concilie as transações com seus títulos — sempre com confirmação manual."
         actions={
-          <>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".ofx,.qfx,text/plain"
-              className="hidden"
-              onChange={onFile}
-            />
-            <button className="btn-primary" onClick={() => fileRef.current?.click()}>
-              <Upload className="h-4 w-4" /> Importar OFX
-            </button>
-          </>
+          !readOnly ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".ofx,.qfx,text/plain"
+                className="hidden"
+                onChange={onFile}
+              />
+              <button className="btn-primary" onClick={() => fileRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Importar OFX
+              </button>
+            </>
+          ) : undefined
         }
       />
+
+      {extratoResumo.length > 0 && (
+        <>
+          <h2 className="mb-3 text-sm font-semibold">Extratos importados</h2>
+          <div className="card mb-6 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Banco / conta</th>
+                  <th className="px-4 py-2.5 font-medium">Período</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Transações</th>
+                  <th className="px-4 py-2.5 font-medium">Importado em</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {extratoResumo.map((e) => (
+                  <tr key={e.id} className="hover:bg-muted/30">
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{e.banco || "—"}</div>
+                      <div className="text-xs text-muted-foreground">{e.conta || "—"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {e.dataInicio && e.dataFim
+                        ? `${formatDate(e.dataInicio)} — ${formatDate(e.dataFim)}`
+                        : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">{e.qtdTransacoes}</td>
+                    <td className="px-4 py-3">{formatDate(e.createdAt.slice(0, 10))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       <div className="mb-3 flex flex-wrap gap-1.5">
         {STATUS_OPTS.map((s) => (
@@ -176,6 +247,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                 <th className="px-4 py-2.5 font-medium">Descrição</th>
                 <th className="px-4 py-2.5 text-right font-medium">Valor</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Título vinculado</th>
                 <th className="px-4 py-2.5 text-right font-medium">Ações</th>
               </tr>
             </thead>
@@ -202,8 +274,17 @@ function Inner({ empresaId }: { empresaId: string }) {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    {t.contaReceberId ? (
+                      <EntityLink type="conta-receber" id={t.contaReceberId} />
+                    ) : t.contaPagarId ? (
+                      <EntityLink type="conta-pagar" id={t.contaPagarId} />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      {t.statusConciliacao === "pendente" && (
+                      {!readOnly && t.statusConciliacao === "pendente" && (
                         <>
                           <button
                             className="btn-outline btn-sm"
@@ -220,7 +301,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                           </button>
                         </>
                       )}
-                      {t.statusConciliacao !== "pendente" && (
+                      {!readOnly && t.statusConciliacao !== "pendente" && (
                         <button
                           className="btn-ghost btn-sm"
                           title="Desfazer"
@@ -256,6 +337,14 @@ function Inner({ empresaId }: { empresaId: string }) {
               <div className="font-medium">{alvo.descricao || "—"}</div>
             </div>
 
+            {categoriaIdSugerida && (
+              <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                Categoria sugerida:{" "}
+                <strong>{catMap.get(categoriaIdSugerida) ?? "—"}</strong>
+                <span className="ml-1 text-xs text-blue-600">(via regra de conciliação)</span>
+              </div>
+            )}
+
             <div>
               <p className="mb-2 text-sm font-medium">
                 Sugestões ({alvo.tipo === "credito" ? "contas a receber" : "contas a pagar"})
@@ -278,9 +367,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="badge bg-accent text-accent-foreground">
-                          {s.score}%
-                        </span>
+                        <span className="badge bg-accent text-accent-foreground">{s.score}%</span>
                         <button className="btn-primary btn-sm" onClick={() => confirmar(s)}>
                           Confirmar
                         </button>

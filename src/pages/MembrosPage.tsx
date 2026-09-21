@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { UserPlus, Trash2, ShieldAlert, Mail, X, Copy, Check } from "lucide-react";
+import { UserPlus, Trash2, ShieldAlert, Mail, X } from "lucide-react";
 import { membroService, conviteService, type Convite, type Membro } from "@/data/membros";
-import { conviteLink } from "@/lib/conviteLink";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { PAPEIS, PAPEL_LABEL, can, type Papel } from "@/lib/rbac";
@@ -9,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
@@ -28,8 +28,6 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [email, setEmail] = useState("");
   const [novoPapel, setNovoPapel] = useState<Papel>("consulta");
   const [toRemove, setToRemove] = useState<Membro | null>(null);
-  const [ultimoConvite, setUltimoConvite] = useState<Convite | null>(null);
-  const [copiado, setCopiado] = useState(false);
 
   if (!isAdmin) {
     return (
@@ -46,11 +44,9 @@ function Inner({ empresaId }: { empresaId: string }) {
       return;
     }
     try {
-      const convite = await conviteService.create(empresaId, email, novoPapel);
+      await conviteService.create(empresaId, email, novoPapel);
       bumpData();
-      setUltimoConvite(convite);
-      setCopiado(false);
-      notify("Convite criado. Compartilhe o link com o convidado.");
+      notify("Convite enviado. O usuário aceita ao entrar com esse e-mail.");
       setEmail("");
     } catch (e) {
       notify((e as Error).message, "error");
@@ -89,17 +85,6 @@ function Inner({ empresaId }: { empresaId: string }) {
     }
   }
 
-  async function copiarLink() {
-    if (!ultimoConvite) return;
-    try {
-      await navigator.clipboard.writeText(conviteLink(ultimoConvite.token));
-      setCopiado(true);
-      notify("Link copiado.");
-    } catch {
-      notify("Não foi possível copiar. Selecione o link manualmente.", "error");
-    }
-  }
-
   const pendentes = convites.filter((c) => c.status === "pendente");
 
   return (
@@ -116,28 +101,14 @@ function Inner({ empresaId }: { empresaId: string }) {
             <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="pessoa@empresa.com" />
           </Field>
           <Field label="Papel">
-            <select className="input" value={novoPapel} onChange={(e) => setNovoPapel(e.target.value as Papel)}>
-              {PAPEIS.map((p) => <option key={p} value={p}>{PAPEL_LABEL[p]}</option>)}
-            </select>
+            <Select
+              value={novoPapel}
+              onChange={(v) => setNovoPapel(v as Papel)}
+              options={PAPEIS.map((p) => ({ value: p, label: PAPEL_LABEL[p] }))}
+            />
           </Field>
           <button className="btn-primary" onClick={convidar}>Convidar</button>
         </div>
-        {ultimoConvite && (
-          <div className="mt-4 space-y-3 rounded-md border border-primary/30 bg-accent/30 p-3 text-sm">
-            <p>
-              Compartilhe este link com <strong>{ultimoConvite.email}</strong>. A pessoa deve{" "}
-              <strong>criar conta ou entrar com exatamente este e-mail</strong> e aceitar o convite
-              como <strong>{PAPEL_LABEL[ultimoConvite.papel]}</strong>.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <input className="input min-w-0 flex-1 text-xs" readOnly value={conviteLink(ultimoConvite.token)} />
-              <button type="button" className="btn-outline btn-sm shrink-0" onClick={copiarLink}>
-                {copiado ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copiado ? "Copiado" : "Copiar link"}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Membros */}
@@ -157,18 +128,17 @@ function Inner({ empresaId }: { empresaId: string }) {
               <tr key={m.id} className="hover:bg-muted/30">
                 <td className="px-4 py-3">{m.email || "—"}</td>
                 <td className="px-4 py-3">
-                  <select
-                    className="input h-8 w-40 text-xs"
+                  <Select
+                    className="w-40 [&>button]:h-8 [&>button]:text-xs"
                     value={m.papel}
-                    onChange={(e) => mudarPapel(m, e.target.value as Papel)}
-                  >
-                    {PAPEIS.map((p) => <option key={p} value={p}>{PAPEL_LABEL[p]}</option>)}
-                  </select>
+                    onChange={(v) => mudarPapel(m, v as Papel)}
+                    options={PAPEIS.map((p) => ({ value: p, label: PAPEL_LABEL[p] }))}
+                  />
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDate(m.createdAt)}</td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end">
-                    <button className="btn-ghost btn-sm btn-delete" title="Remover" onClick={() => setToRemove(m)}>
+                    <button className="btn-ghost btn-sm text-destructive" onClick={() => setToRemove(m)}>
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>

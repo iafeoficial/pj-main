@@ -1,6 +1,9 @@
 import { ArrowUpCircle } from "lucide-react";
 import { contaPagarService } from "@/data/services";
+import { valorDevido } from "@/lib/contaPagarExtras";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
+import { useEmpresa } from "@/context/EmpresaContext";
+import { canWrite } from "@/lib/rbac";
 import {
   ContasModule,
   type ContasConfig,
@@ -11,8 +14,11 @@ const config: ContasConfig = {
   titulo: "Contas a Pagar",
   subtitulo: "Despesas e obrigações da empresa.",
   icon: ArrowUpCircle,
-  pessoaLabel: "Fornecedor",
+  pessoaLabel: "Beneficiário",
+  pessoaCadastro: "fornecedor",
   categoriaTipo: "despesa",
+  usaContaFinanceira: true,
+  extrasPagar: true,
   baixaLabel: "Registrar pagamento",
   statusBaixado: "paga",
   list: async (empresaId): Promise<ContaLike[]> =>
@@ -22,8 +28,17 @@ const config: ContasConfig = {
       pessoa: c.fornecedor,
       categoriaId: c.categoriaId,
       centroCustoId: c.centroCustoId,
+      contaFinanceiraId: c.contaFinanceiraId,
       valor: c.valor,
       valorBaixado: c.valorPago,
+      valorDevido: valorDevido(c),
+      desconto: c.desconto,
+      juros: c.juros,
+      numeroNf: c.numeroNf,
+      impostos: c.impostos,
+      parcelaNumero: c.parcelaNumero,
+      parcelaTotal: c.parcelaTotal,
+      recorrencia: c.recorrencia,
       dataCompetencia: c.dataCompetencia,
       dataVencimento: c.dataVencimento,
       dataBaixa: c.dataPagamento,
@@ -35,18 +50,31 @@ const config: ContasConfig = {
       fornecedor: input.pessoa,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
+      contaFinanceiraId: input.contaFinanceiraId,
       valor: input.valor,
+      desconto: input.desconto ?? 0,
+      juros: input.juros ?? 0,
+      numeroNf: input.numeroNf ?? "",
+      impostos: input.impostos ?? null,
       dataCompetencia: input.dataCompetencia,
       dataVencimento: input.dataVencimento,
       status: input.status,
       observacao: input.observacao,
+      parcelas: input.parcelas,
+      recorrencia: input.recorrencia ?? null,
+      recorrenciaOcorrencias: input.recorrenciaOcorrencias,
     }),
   update: (empresaId, id, input) =>
     contaPagarService.update(empresaId, id, {
       fornecedor: input.pessoa,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
+      contaFinanceiraId: input.contaFinanceiraId,
       valor: input.valor,
+      desconto: input.desconto ?? 0,
+      juros: input.juros ?? 0,
+      numeroNf: input.numeroNf ?? "",
+      impostos: input.impostos ?? null,
       dataCompetencia: input.dataCompetencia,
       dataVencimento: input.dataVencimento,
       status: input.status,
@@ -54,6 +82,7 @@ const config: ContasConfig = {
     }),
   baixar: (empresaId, id, valor, data) =>
     contaPagarService.registrarPagamento(empresaId, id, valor, data),
+  listPagamentos: (empresaId, id) => contaPagarService.listPagamentos(empresaId, id),
   cancelar: (empresaId, id) => contaPagarService.cancelar(empresaId, id),
   remove: (empresaId, id) => contaPagarService.remove(empresaId, id),
 };
@@ -61,7 +90,12 @@ const config: ContasConfig = {
 export function ContasPagarPage() {
   return (
     <RequireEmpresa>
-      {(id) => <ContasModule empresaId={id} config={config} />}
+      {(id) => <ContasPagarInner empresaId={id} />}
     </RequireEmpresa>
   );
+}
+
+function ContasPagarInner({ empresaId }: { empresaId: string }) {
+  const { papel } = useEmpresa();
+  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
 }

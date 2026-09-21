@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { ItemEditavel, Produto } from "@/types/domain";
 import { formatBRL } from "@/lib/utils";
+import { Select } from "@/components/ui/Select";
 
 interface Props {
   itens: ItemEditavel[];
@@ -55,16 +56,15 @@ export function ItensEditor({ itens, onChange, produtos, precoFonte }: Props) {
               <div className="col-span-12 sm:col-span-5">
                 <label className="text-xs text-muted-foreground">Produto / descrição</label>
                 {produtos.length > 0 && (
-                  <select
-                    className="input mb-1 h-8 text-xs"
+                  <Select
+                    className="mb-1 [&>button]:h-8 [&>button]:text-xs"
                     value={it.produtoId ?? ""}
-                    onChange={(e) => onSelectProduto(i, e.target.value)}
-                  >
-                    <option value="">— avulso —</option>
-                    {produtos.map((p) => (
-                      <option key={p.id} value={p.id}>{p.nome}</option>
-                    ))}
-                  </select>
+                    onChange={(v) => onSelectProduto(i, v)}
+                    options={[
+                      { value: "", label: "— avulso —" },
+                      ...produtos.map((p) => ({ value: p.id, label: p.nome })),
+                    ]}
+                  />
                 )}
                 <input
                   className="input h-8"
@@ -97,7 +97,7 @@ export function ItensEditor({ itens, onChange, produtos, precoFonte }: Props) {
                 {formatBRL(it.quantidade * it.valorUnitario)}
               </div>
               <div className="col-span-1 flex justify-end">
-                <button type="button" className="btn-ghost btn-sm btn-delete" title="Excluir" onClick={() => remove(i)}>
+                <button type="button" className="btn-ghost btn-sm text-destructive" onClick={() => remove(i)}>
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

@@ -1,0 +1,195 @@
+import type { ImpostosRetidos, ImpostoRetido, RecorrenciaTipo } from "@/types/domain";
+import { IMPOSTOS_RETIDOS } from "@/types/domain";
+import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
+import { formatBRL, formatDate } from "@/lib/utils";
+import {
+  IMPOSTO_LABELS,
+  RECORRENCIA_OPTS,
+  totalImpostosRetidos,
+} from "@/lib/contaPagarExtras";
+
+export function emptyImpostos(): ImpostosRetidos {
+  const out: ImpostosRetidos = {};
+  for (const k of IMPOSTOS_RETIDOS) {
+    out[k] = { reter: false, valor: 0 };
+  }
+  return out;
+}
+
+export function ImpostosFields({
+  value,
+  onChange,
+}: {
+  value: ImpostosRetidos | null;
+  onChange: (v: ImpostosRetidos) => void;
+}) {
+  const impostos = value ?? emptyImpostos();
+  const total = totalImpostosRetidos(impostos);
+
+  function patch(key: ImpostoRetido, partial: Partial<{ reter: boolean; valor: number }>) {
+    onChange({
+      ...impostos,
+      [key]: { reter: impostos[key]?.reter ?? false, valor: impostos[key]?.valor ?? 0, ...partial },
+    });
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Marque &quot;Reter&quot; e informe o valor. Impostos retidos reduzem o valor devido na baixa.
+      </p>
+      <div className="space-y-2">
+        {IMPOSTOS_RETIDOS.map((key) => {
+          const linha = impostos[key] ?? { reter: false, valor: 0 };
+          return (
+            <div key={key} className="flex flex-wrap items-center gap-3 rounded-md border border-border px-3 py-2">
+              <label className="flex w-28 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="rounded border-border"
+                  checked={linha.reter}
+                  onChange={(e) => patch(key, { reter: e.target.checked })}
+                />
+                {IMPOSTO_LABELS[key]}
+              </label>
+              <input
+                className="input h-9 w-32"
+                type="number"
+                min="0"
+                step="0.01"
+                disabled={!linha.reter}
+                value={linha.reter ? linha.valor || "" : ""}
+                placeholder="0,00"
+                onChange={(e) => patch(key, { valor: Number(e.target.value) || 0 })}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {total > 0 && (
+        <p className="text-sm text-muted-foreground">
+          Total a reter: <span className="font-medium text-foreground">{formatBRL(total)}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function ParcelasRepeticaoFields({
+  parcelas,
+  recorrencia,
+  recorrenciaOcorrencias,
+  editing,
+  onChange,
+}: {
+  parcelas: number;
+  recorrencia: RecorrenciaTipo | null;
+  recorrenciaOcorrencias: number;
+  editing: boolean;
+  onChange: ( partial: {
+    parcelas?: number;
+    recorrencia?: RecorrenciaTipo | null;
+    recorrenciaOcorrencias?: number;
+  }) => void;
+}) {
+  if (editing) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Parcelamento e repetição só podem ser definidos na criação do lançamento.
+      </p>
+    );
+  }
+
+  const temParcelas = parcelas > 1;
+  const temRecorrencia = !!recorrencia;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <Field
+        label="Parcelas"
+        hint={temRecorrencia ? "Desative a repetição para parcelar." : "Gera N títulos mensais."}
+      >
+        <input
+          className="input"
+          type="number"
+          min="1"
+          max="60"
+          disabled={temRecorrencia}
+          value={parcelas || 1}
+          onChange={(e) => {
+            const n = Math.max(1, Math.min(60, Math.floor(Number(e.target.value) || 1)));
+            onChange({ parcelas: n, ...(n > 1 ? { recorrencia: null } : {}) });
+          }}
+        />
+      </Field>
+      <Field
+        label="Repetição"
+        hint={temParcelas ? "Desative o parcelamento para repetir." : "Gera títulos futuros."}
+      >
+        <Select
+          value={recorrencia ?? ""}
+          onChange={(v) =>
+            onChange({
+              recorrencia: (v || null) as RecorrenciaTipo | null,
+              ...(v ? { parcelas: 1 } : {}),
+            })
+          }
+          options={[
+            { value: "", label: "— sem repetição —" },
+            ...RECORRENCIA_OPTS.map((o) => ({ value: o.value, label: o.label })),
+          ]}
+          disabled={temParcelas}
+        />
+      </Field>
+      {temRecorrencia && (
+        <Field label="Ocorrências" hint="Inclui o lançamento atual.">
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="36"
+            value={recorrenciaOcorrencias || 1}
+            onChange={(e) =>
+              onChange({
+                recorrenciaOcorrencias: Math.max(1, Math.min(36, Math.floor(Number(e.target.value) || 1))),
+              })
+            }
+          />
+        </Field>
+      )}
+    </div>
+  );
+}
+
+export function HistoricoPagamentos({
+  items,
+}: {
+  items: { id: string; data: string; valor: number; observacao: string }[];
+}) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Nenhum pagamento registrado ainda.</p>;
+  }
+  return (
+    <div className="overflow-hidden rounded-md border border-border">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 font-medium">Data</th>
+            <th className="px-3 py-2 text-right font-medium">Valor</th>
+            <th className="px-3 py-2 font-medium">Obs.</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {items.map((p) => (
+            <tr key={p.id}>
+              <td className="px-3 py-2">{formatDate(p.data)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatBRL(p.valor)}</td>
+              <td className="px-3 py-2 text-muted-foreground">{p.observacao || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

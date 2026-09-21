@@ -36,8 +36,6 @@ export function LoginPage() {
         if (needsConfirmation) {
           setInfo("Conta criada! Confirme o e-mail recebido para acessar.");
           setMode("login");
-        } else {
-          setInfo("Conta criada! Você já pode usar o sistema.");
         }
       }
     } catch (err) {
@@ -51,9 +49,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-2">
-          <div className="grid h-12 w-12 place-items-center rounded-xl bg-primary text-primary-foreground">
-            <span className="text-lg font-bold">PJ</span>
-          </div>
+          <img src="/logo-iafe.png" alt="IAFE" className="h-12 w-12 object-contain" />
           <h1 className="text-xl font-semibold">Finanças PJ</h1>
           <p className="text-sm text-muted-foreground">Gestão financeira multiempresa</p>
         </div>
@@ -116,10 +112,6 @@ export function LoginPage() {
             </button>
           </form>
         </div>
-
-        <p className="mt-4 text-center text-xs text-muted-foreground">
-          Seus dados são isolados por usuário (RLS no Supabase).
-        </p>
       </div>
     </div>
   );

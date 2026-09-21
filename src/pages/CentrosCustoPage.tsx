@@ -123,12 +123,11 @@ function Inner({ empresaId }: { empresaId: string }) {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(c)}>
+                      <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        className="btn-ghost btn-sm btn-delete"
-                        title="Excluir"
+                        className="btn-ghost btn-sm text-destructive"
                         onClick={() => setToDelete(c)}
                       >
                         <Trash2 className="h-4 w-4" />

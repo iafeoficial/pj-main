@@ -1,7 +1,8 @@
 import { FileCheck2, ShieldCheck, Server, FileText, Landmark } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { RequireEmpresa } from "@/components/RequireEmpresa";
 
-export function FiscalPage() {
+function FiscalInner() {
   return (
     <>
       <PageHeader
@@ -35,6 +36,10 @@ export function FiscalPage() {
       </p>
     </>
   );
+}
+
+export function FiscalPage() {
+  return <RequireEmpresa>{() => <FiscalInner />}</RequireEmpresa>;
 }
 
 function Card({ icon: Icon, titulo, texto }: { icon: typeof FileText; titulo: string; texto: string }) {

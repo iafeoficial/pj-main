@@ -9,6 +9,8 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
@@ -150,10 +152,10 @@ function Inner({ empresaId }: { empresaId: string }) {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(c)}>
+                      <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button className="btn-ghost btn-sm btn-delete" title="Excluir" onClick={() => setToDelete(c)}>
+                      <button className="btn-ghost btn-sm text-destructive" onClick={() => setToDelete(c)}>
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
@@ -185,13 +187,20 @@ function Inner({ empresaId }: { empresaId: string }) {
             <input className="input" value={form.titular} onChange={(e) => setForm({ ...form, titular: e.target.value })} autoFocus />
           </Field>
           <Field label="Tipo">
-            <select className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value as CertificadoTipo })}>
-              <option value="A1">A1 (arquivo)</option>
-              <option value="A3">A3 (token/cartão)</option>
-            </select>
+            <Select
+              value={form.tipo}
+              onChange={(tipo) => setForm({ ...form, tipo: tipo as CertificadoTipo })}
+              options={[
+                { value: "A1", label: "A1 (arquivo)" },
+                { value: "A3", label: "A3 (token/cartão)" },
+              ]}
+            />
           </Field>
           <Field label="Validade" required>
-            <input className="input" type="date" value={form.validade} onChange={(e) => setForm({ ...form, validade: e.target.value })} />
+            <DatePicker
+              value={form.validade}
+              onChange={(validade) => setForm({ ...form, validade })}
+            />
           </Field>
           <Field label="Observação" className="sm:col-span-2">
             <input className="input" value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} />

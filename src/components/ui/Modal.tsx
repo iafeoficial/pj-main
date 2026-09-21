@@ -8,9 +8,10 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  zIndex?: number;
 }
 
-export function Modal({ open, title, onClose, children, footer, width = "max-w-lg" }: ModalProps) {
+export function Modal({ open, title, onClose, children, footer, width = "max-w-lg", zIndex = 50 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -22,7 +23,8 @@ export function Modal({ open, title, onClose, children, footer, width = "max-w-l
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 py-10"
+      className="fixed inset-0 flex items-start justify-center overflow-y-auto bg-black/40 p-4 py-10"
+      style={{ zIndex }}
       onClick={onClose}
     >
       <div

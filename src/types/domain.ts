@@ -7,10 +7,25 @@ export interface BaseEntity {
   updatedAt: string; // ISO
 }
 
+// ---- Endereço BR (cadastros operacionais) ----
+export interface Endereco {
+  cep: string;
+  logradouro: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+}
+
+export type TipoPessoa = "pf" | "pj";
+
+export type FonteLead = "indicacao" | "site" | "redes" | "evento" | "outro";
+
 // ---- Multiempresa ----
 export type EmpresaStatus = "ativa" | "inativa";
 
-export interface Empresa extends BaseEntity {
+export interface Empresa extends BaseEntity, Endereco {
   cnpj: string;
   razaoSocial: string;
   nomeFantasia: string;
@@ -27,10 +42,19 @@ export interface OwnedEntity extends BaseEntity {
 // ---- Categorias ----
 export type CategoriaTipo = "receita" | "despesa";
 
+/** Agrupa categorias-folha na DRE (ex.: Despesas Administrativas). */
+export interface CategoriaGrupo extends OwnedEntity {
+  nome: string;
+  tipo: CategoriaTipo;
+  ativo: boolean;
+}
+
 export interface Categoria extends OwnedEntity {
   nome: string;
   tipo: CategoriaTipo;
   ativo: boolean;
+  /** Grupo pai (nullable). Só categorias-folha entram em lançamentos. */
+  grupoId: string | null;
 }
 
 // ---- Centro de Custo ----
@@ -38,6 +62,28 @@ export interface CentroCusto extends OwnedEntity {
   nome: string;
   codigo: string;
   ativo: boolean;
+}
+
+// ---- Contas e Cartões ----
+export type ContaFinanceiraTipo = "conta_corrente" | "cartao_credito";
+
+export interface ContaFinanceira extends OwnedEntity {
+  tipo: ContaFinanceiraTipo;
+  nome: string;
+  instituicao: string;
+  /** Titular / responsável pelo cartão ou conta. */
+  titular: string;
+  ativo: boolean;
+  observacao: string;
+  // conta corrente
+  agencia: string;
+  numeroConta: string;
+  // cartão de crédito
+  bandeira: string;
+  diaVencimentoFatura: number | null; // 1–28
+  // saldo de abertura (opcional)
+  saldoInicial: number;
+  dataSaldoInicial: string | null; // yyyy-MM-dd
 }
 
 // ---- Contas a Pagar ----
@@ -49,18 +95,56 @@ export type ContaPagarStatus =
   | "vencida"
   | "cancelada";
 
+/** Impostos retidos na fonte (valor + flag "reter"). */
+export const IMPOSTOS_RETIDOS = ["pis", "cofins", "csll", "ir", "iss", "inss"] as const;
+export type ImpostoRetido = (typeof IMPOSTOS_RETIDOS)[number];
+
+export interface ImpostoLinha {
+  reter: boolean;
+  valor: number;
+}
+
+export type ImpostosRetidos = Partial<Record<ImpostoRetido, ImpostoLinha>>;
+
+export type RecorrenciaTipo =
+  | "semanal"
+  | "quinzenal"
+  | "mensal"
+  | "semestral"
+  | "anual";
+
 export interface ContaPagar extends OwnedEntity {
   fornecedor: string;
   categoriaId: string | null;
   centroCustoId: string | null;
+  contaFinanceiraId: string | null;
   valor: number;
   valorPago: number;
+  desconto: number;
+  juros: number;
+  numeroNf: string;
+  impostos: ImpostosRetidos | null;
+  // Parcelamento: títulos irmãos compartilham `grupoParcelamento`.
+  parcelaNumero: number | null;
+  parcelaTotal: number | null;
+  grupoParcelamento: string | null;
+  // Repetição: títulos gerados em série compartilham `grupoRecorrencia`.
+  recorrencia: RecorrenciaTipo | null;
+  grupoRecorrencia: string | null;
   dataCompetencia: string; // ISO date (yyyy-MM-dd)
   dataVencimento: string;
   dataPagamento: string | null;
   status: ContaPagarStatus;
   observacao: string;
   createdBy: string;
+}
+
+/** Baixa individual de uma conta a pagar (histórico de pagamentos). */
+export interface PagamentoConta extends OwnedEntity {
+  contaPagarId: string;
+  data: string; // yyyy-MM-dd
+  valor: number;
+  observacao: string;
 }
 
 // ---- Contas a Receber ----
@@ -148,26 +232,37 @@ export interface Certificado extends OwnedEntity {
 }
 
 // ---- Fase 5: Operação ----
-export interface Fornecedor extends OwnedEntity {
+export interface Fornecedor extends OwnedEntity, Endereco {
+  tipoPessoa: TipoPessoa;
   nome: string;
+  nomeFantasia: string;
   cnpjCpf: string;
+  contatoNome: string;
   email: string;
   telefone: string;
+  observacao: string;
   ativo: boolean;
 }
 
-export interface Cliente extends OwnedEntity {
+export interface Cliente extends OwnedEntity, Endereco {
+  tipoPessoa: TipoPessoa;
   nome: string;
+  nomeFantasia: string;
   cnpjCpf: string;
+  contatoNome: string;
   email: string;
   telefone: string;
+  observacao: string;
   ativo: boolean;
 }
 
 export interface Vendedor extends OwnedEntity {
   nome: string;
   email: string;
+  telefone: string;
+  cpf: string;
   comissaoPercent: number;
+  observacao: string;
   ativo: boolean;
 }
 
@@ -175,10 +270,12 @@ export interface Produto extends OwnedEntity {
   nome: string;
   sku: string;
   unidade: string;
+  descricao: string;
   precoVenda: number;
   custoMedio: number;
   estoqueAtual: number;
   controlaEstoque: boolean;
+  observacao: string;
   ativo: boolean;
 }
 
@@ -233,11 +330,13 @@ export interface Oportunidade extends OwnedEntity {
   clienteId: string | null;
   clienteNome: string;
   vendedorId: string | null;
+  pedidoVendaId: string | null;
   contato: string;
   valorEstimado: number;
   estagio: OportunidadeEstagio;
+  dataPrevisaoFechamento: string | null;
+  fonteLead: FonteLead | null;
   observacao: string;
-  pedidoVendaId: string | null;
 }
 
 // Item genérico para edição na UI (compra/venda).

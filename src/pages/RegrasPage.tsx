@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
@@ -164,12 +165,11 @@ function Inner({ empresaId }: { empresaId: string }) {
                   <td className="px-4 py-3 text-muted-foreground">{r.ativo ? "Ativa" : "Inativa"}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(r)}>
+                      <button className="btn-ghost btn-sm" onClick={() => openEdit(r)}>
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        className="btn-ghost btn-sm btn-delete"
-                        title="Excluir"
+                        className="btn-ghost btn-sm text-destructive"
                         onClick={() => setToDelete(r)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -216,29 +216,25 @@ function Inner({ empresaId }: { empresaId: string }) {
             />
           </Field>
           <Field label="Aplica-se a">
-            <select
-              className="input"
+            <Select
               value={form.tipo}
-              onChange={(e) => setForm({ ...form, tipo: e.target.value as FormState["tipo"] })}
-            >
-              <option value="">Ambos</option>
-              <option value="credito">Crédito (entrada)</option>
-              <option value="debito">Débito (saída)</option>
-            </select>
+              onChange={(tipo) => setForm({ ...form, tipo: tipo as FormState["tipo"] })}
+              options={[
+                { value: "", label: "Ambos" },
+                { value: "credito", label: "Crédito (entrada)" },
+                { value: "debito", label: "Débito (saída)" },
+              ]}
+            />
           </Field>
           <Field label="Categoria sugerida">
-            <select
-              className="input"
+            <Select
               value={form.categoriaId}
-              onChange={(e) => setForm({ ...form, categoriaId: e.target.value })}
-            >
-              <option value="">— nenhuma —</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
+              onChange={(categoriaId) => setForm({ ...form, categoriaId })}
+              options={[
+                { value: "", label: "— nenhuma —" },
+                ...categorias.map((c) => ({ value: c.id, label: c.nome })),
+              ]}
+            />
           </Field>
           <Field label="Prioridade">
             <input

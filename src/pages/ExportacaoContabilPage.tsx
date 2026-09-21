@@ -8,6 +8,7 @@ import { exportCSV } from "@/lib/csv";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 
 function Inner({ empresaId }: { empresaId: string }) {
@@ -46,10 +47,10 @@ function Inner({ empresaId }: { empresaId: string }) {
 
       <div className="card mb-6 flex flex-wrap items-end gap-4 p-4">
         <Field label="Início">
-          <input className="input" type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
+          <DatePicker value={inicio} onChange={setInicio} />
         </Field>
         <Field label="Fim">
-          <input className="input" type="date" value={fim} onChange={(e) => setFim(e.target.value)} />
+          <DatePicker value={fim} onChange={setFim} />
         </Field>
         <div className="ml-auto text-sm">
           <p className="text-xs text-muted-foreground">Total no período</p>

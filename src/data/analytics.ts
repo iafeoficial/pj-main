@@ -2,6 +2,7 @@
 import type { ContaPagar, ContaReceber } from "@/types/domain";
 import { monthRange } from "@/lib/utils";
 import {
+  categoriaGrupoService,
   categoriaService,
   centroCustoService,
   contaPagarService,
@@ -187,41 +188,108 @@ export async function getRelatorios(empresaId: string, inicio: string, fim: stri
 // ---------------------------------------------------------------------------
 // DRE — Demonstração do Resultado do Exercício (regime de competência)
 // ---------------------------------------------------------------------------
+export interface DRECategoriaLinha {
+  chave: string;
+  rotulo: string;
+  total: number;
+  qtd: number;
+}
+
+export interface DREGrupoLinha {
+  chave: string;
+  rotulo: string;
+  total: number;
+  categorias: DRECategoriaLinha[];
+}
+
 export interface DREData {
   inicio: string;
   fim: string;
-  receitas: GroupRow[];
-  despesas: GroupRow[];
+  receitas: DREGrupoLinha[];
+  despesas: DREGrupoLinha[];
   totalReceitas: number;
   totalDespesas: number;
   resultado: number;
   margem: number; // resultado / receitas (%)
 }
 
+function buildDREHierarquia(
+  itens: { valor: number; categoriaId: string | null }[],
+  categorias: { id: string; nome: string; grupoId: string | null }[],
+  grupos: { id: string; nome: string }[]
+): DREGrupoLinha[] {
+  const catMap = new Map(categorias.map((c) => [c.id, c]));
+  const grupoNome = new Map(grupos.map((g) => [g.id, g.nome]));
+
+  // grupoKey → categoriaKey → acumulado
+  const bucket = new Map<
+    string,
+    { rotulo: string; cats: Map<string, DRECategoriaLinha> }
+  >();
+
+  function ensureGrupo(key: string, rotulo: string) {
+    let g = bucket.get(key);
+    if (!g) {
+      g = { rotulo, cats: new Map() };
+      bucket.set(key, g);
+    }
+    return g;
+  }
+
+  for (const it of itens) {
+    const cat = it.categoriaId ? catMap.get(it.categoriaId) : undefined;
+    const grupoKey = cat?.grupoId ?? "sem-grupo";
+    const grupoRotulo = cat?.grupoId
+      ? grupoNome.get(cat.grupoId) ?? "Grupo removido"
+      : "Sem grupo";
+    const catKey = it.categoriaId ?? "sem";
+    const catRotulo = cat?.nome ?? (it.categoriaId ? "—" : "Sem categoria");
+
+    const g = ensureGrupo(grupoKey, grupoRotulo);
+    const cur = g.cats.get(catKey) ?? { chave: catKey, rotulo: catRotulo, total: 0, qtd: 0 };
+    cur.total += it.valor;
+    cur.qtd += 1;
+    g.cats.set(catKey, cur);
+  }
+
+  return [...bucket.entries()]
+    .map(([chave, g]) => {
+      const categoriasLinha = [...g.cats.values()].sort((a, b) => b.total - a.total);
+      return {
+        chave,
+        rotulo: g.rotulo,
+        total: categoriasLinha.reduce((s, c) => s + c.total, 0),
+        categorias: categoriasLinha,
+      };
+    })
+    .sort((a, b) => {
+      // "Sem grupo" por último
+      if (a.chave === "sem-grupo") return 1;
+      if (b.chave === "sem-grupo") return -1;
+      return b.total - a.total;
+    });
+}
+
 export async function getDRE(empresaId: string, inicio: string, fim: string): Promise<DREData> {
   const inRange = (iso: string) => iso >= inicio && iso <= fim;
-  const [pagarAll, receberAll, categorias] = await Promise.all([
+  const [pagarAll, receberAll, categorias, grupos] = await Promise.all([
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
     categoriaService.list(empresaId),
+    categoriaGrupoService.list(empresaId),
   ]);
   const pagar = pagarAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
   const receber = receberAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
-  const catMap = new Map(categorias.map((c) => [c.id, c.nome]));
 
-  const receitas = groupBy(
-    receber.map((c) => ({
-      valor: c.valor,
-      key: c.categoriaId ?? "sem",
-      label: c.categoriaId ? catMap.get(c.categoriaId) ?? "—" : "Sem categoria",
-    }))
+  const receitas = buildDREHierarquia(
+    receber.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    categorias,
+    grupos.filter((g) => g.tipo === "receita")
   );
-  const despesas = groupBy(
-    pagar.map((c) => ({
-      valor: c.valor,
-      key: c.categoriaId ?? "sem",
-      label: c.categoriaId ? catMap.get(c.categoriaId) ?? "—" : "Sem categoria",
-    }))
+  const despesas = buildDREHierarquia(
+    pagar.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    categorias,
+    grupos.filter((g) => g.tipo === "despesa")
   );
 
   const totalReceitas = receitas.reduce((s, r) => s + r.total, 0);

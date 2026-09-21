@@ -8,16 +8,18 @@ import { categoriaService, centroCustoService } from "@/data/services";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { formatBRL, formatDate, today } from "@/lib/utils";
+import { canWrite } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { usePermissions } from "@/hooks/usePermissions";
-import { WriteGate } from "@/components/RequireCapability";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { ItensEditor } from "@/features/pedidos/ItensEditor";
+import { EntityLink } from "@/components/EntityLink";
 
 const STATUS_STYLE: Record<string, string> = {
   rascunho: "bg-muted text-muted-foreground",
@@ -27,8 +29,8 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 function Inner({ empresaId }: { empresaId: string }) {
-  const { version, bumpData } = useEmpresa();
-  const { canWrite } = usePermissions();
+  const { version, bumpData, papel } = useEmpresa();
+  const readOnly = !canWrite(papel);
   const { notify } = useToast();
 
   const { data: pedidos } = useAsyncData(() => compraService.list(empresaId), [empresaId, version], [] as PedidoCompra[]);
@@ -140,11 +142,11 @@ function Inner({ empresaId }: { empresaId: string }) {
         title="Compras"
         subtitle="Pedidos de compra. Ao receber, geram conta a pagar e entrada no estoque."
         actions={
-          <WriteGate>
+          !readOnly ? (
             <button className="btn-primary" onClick={abrirNovo}>
               <Plus className="h-4 w-4" /> Novo pedido
             </button>
-          </WriteGate>
+          ) : undefined
         }
       />
 
@@ -164,6 +166,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                 <th className="px-4 py-2.5 font-medium">Fornecedor</th>
                 <th className="px-4 py-2.5 text-right font-medium">Total</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Financeiro</th>
                 <th className="px-4 py-2.5 text-right font-medium">Ações</th>
               </tr>
             </thead>
@@ -175,30 +178,35 @@ function Inner({ empresaId }: { empresaId: string }) {
                   <td className="px-4 py-3 text-right tabular-nums">{formatBRL(p.valorTotal)}</td>
                   <td className="px-4 py-3"><span className={`badge ${STATUS_STYLE[p.status]}`}>{p.status}</span></td>
                   <td className="px-4 py-3">
-                    {canWrite && (
-                      <div className="flex justify-end gap-1">
-                        {p.status === "rascunho" && (
-                          <button className="btn-outline btn-sm" onClick={() => aprovar(p)}>
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Aprovar
-                          </button>
-                        )}
-                        {(p.status === "aprovado" || p.status === "rascunho") && (
-                          <button className="btn-outline btn-sm" onClick={() => abrirReceber(p)}>
-                            <PackageCheck className="h-3.5 w-3.5" /> Receber
-                          </button>
-                        )}
-                        {p.status !== "cancelado" && p.status !== "recebido" && (
-                          <button className="btn-ghost btn-sm text-warning" title="Cancelar" onClick={() => setToCancel(p)}>
-                            <Ban className="h-4 w-4" />
-                          </button>
-                        )}
-                        {p.status !== "recebido" && (
-                          <button className="btn-ghost btn-sm btn-delete" title="Excluir" onClick={() => setToDelete(p)}>
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
+                    {p.contaPagarId ? (
+                      <EntityLink type="conta-pagar" id={p.contaPagarId} label="Conta a pagar" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-1">
+                      {!readOnly && p.status === "rascunho" && (
+                        <button className="btn-outline btn-sm" onClick={() => aprovar(p)}>
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Aprovar
+                        </button>
+                      )}
+                      {!readOnly && (p.status === "aprovado" || p.status === "rascunho") && (
+                        <button className="btn-outline btn-sm" onClick={() => abrirReceber(p)}>
+                          <PackageCheck className="h-3.5 w-3.5" /> Receber
+                        </button>
+                      )}
+                      {!readOnly && p.status !== "cancelado" && p.status !== "recebido" && (
+                        <button className="btn-ghost btn-sm text-warning" title="Cancelar" onClick={() => setToCancel(p)}>
+                          <Ban className="h-4 w-4" />
+                        </button>
+                      )}
+                      {!readOnly && p.status !== "recebido" && (
+                        <button className="btn-ghost btn-sm text-destructive" onClick={() => setToDelete(p)}>
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -223,13 +231,18 @@ function Inner({ empresaId }: { empresaId: string }) {
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Fornecedor">
-              <select className="input" value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
-                <option value="">— selecione —</option>
-                {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
-              </select>
+              <Select
+                value={fornecedorId}
+                onChange={setFornecedorId}
+                placeholder="— selecione —"
+                options={[
+                  { value: "", label: "— selecione —" },
+                  ...fornecedores.map((f) => ({ value: f.id, label: f.nome })),
+                ]}
+              />
             </Field>
             <Field label="Data">
-              <input className="input" type="date" value={data} onChange={(e) => setData(e.target.value)} />
+              <DatePicker value={data} onChange={setData} />
             </Field>
           </div>
           <ItensEditor itens={itens} onChange={setItens} produtos={produtos} precoFonte="custo" />
@@ -258,19 +271,27 @@ function Inner({ empresaId }: { empresaId: string }) {
             </p>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Vencimento" required>
-                <input className="input" type="date" value={vencimento} onChange={(e) => setVencimento(e.target.value)} />
+                <DatePicker value={vencimento} onChange={setVencimento} />
               </Field>
               <Field label="Categoria">
-                <select className="input" value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
-                  <option value="">— sem categoria —</option>
-                  {categorias.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                </select>
+                <Select
+                  value={categoriaId}
+                  onChange={setCategoriaId}
+                  options={[
+                    { value: "", label: "— sem categoria —" },
+                    ...categorias.map((c) => ({ value: c.id, label: c.nome })),
+                  ]}
+                />
               </Field>
               <Field label="Centro de custo" className="sm:col-span-2">
-                <select className="input" value={centroId} onChange={(e) => setCentroId(e.target.value)}>
-                  <option value="">— sem centro —</option>
-                  {centros.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                </select>
+                <Select
+                  value={centroId}
+                  onChange={setCentroId}
+                  options={[
+                    { value: "", label: "— sem centro —" },
+                    ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                  ]}
+                />
               </Field>
             </div>
           </div>

@@ -1,20 +1,34 @@
 // Serviços de domínio (C3 — Supabase, assíncronos). Encapsulam regras de negócio + auditoria.
 import type {
   Categoria,
+  CategoriaGrupo,
   CategoriaTipo,
   CentroCusto,
+  ContaFinanceira,
   ContaPagar,
   ContaReceber,
   Empresa,
+  ImpostosRetidos,
+  PagamentoConta,
+  RecorrenciaTipo,
 } from "@/types/domain";
-import { today } from "@/lib/utils";
+import { today, uid } from "@/lib/utils";
+import {
+  addMonthsIso,
+  avancarRecorrencia,
+  splitParcelas,
+  valorDevido,
+} from "@/lib/contaPagarExtras";
 import { getCurrentUser, logAudit } from "./audit";
 import {
+  categoriaGrupoTable,
   categoriaTable,
   centroCustoTable,
+  contaFinanceiraTable,
   contaPagarTable,
   contaReceberTable,
   empresaTable,
+  pagamentoContaTable,
 } from "./repos";
 
 // ---------------------------------------------------------------------------
@@ -63,19 +77,74 @@ export const empresaService = {
 };
 
 // ---------------------------------------------------------------------------
-// Categorias
+// Categorias e grupos
 // ---------------------------------------------------------------------------
+export const categoriaGrupoService = {
+  async list(empresaId: string): Promise<CategoriaGrupo[]> {
+    return (await categoriaGrupoTable.list(empresaId)).sort((a, b) => a.nome.localeCompare(b.nome));
+  },
+  async listAtivos(empresaId: string, tipo?: CategoriaTipo): Promise<CategoriaGrupo[]> {
+    return (await categoriaGrupoTable.list(empresaId))
+      .filter((g) => g.ativo && (!tipo || g.tipo === tipo))
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  },
+  async create(empresaId: string, data: { nome: string; tipo: CategoriaTipo; ativo: boolean }) {
+    const g = await categoriaGrupoTable.create(empresaId, data);
+    await logAudit({
+      empresaId,
+      entidade: "CategoriaGrupo",
+      entidadeId: g.id,
+      acao: "inclusao",
+      descricao: `Grupo de categoria "${g.nome}" criado.`,
+    });
+    return g;
+  },
+  async update(empresaId: string, id: string, data: Partial<CategoriaGrupo>) {
+    const g = await categoriaGrupoTable.update(empresaId, id, data);
+    await logAudit({
+      empresaId,
+      entidade: "CategoriaGrupo",
+      entidadeId: id,
+      acao: "alteracao",
+      descricao: `Grupo de categoria "${g.nome}" alterado.`,
+    });
+    return g;
+  },
+  async remove(empresaId: string, id: string) {
+    const g = await categoriaGrupoTable.find(empresaId, id);
+    await categoriaGrupoTable.remove(empresaId, id);
+    if (g) {
+      await logAudit({
+        empresaId,
+        entidade: "CategoriaGrupo",
+        entidadeId: id,
+        acao: "exclusao",
+        descricao: `Grupo de categoria "${g.nome}" excluído.`,
+      });
+    }
+  },
+};
+
 export const categoriaService = {
   async list(empresaId: string): Promise<Categoria[]> {
     return (await categoriaTable.list(empresaId)).sort((a, b) => a.nome.localeCompare(b.nome));
   },
+  /** Categorias-folha ativas (usadas em lançamentos — nunca são grupos). */
   async listAtivas(empresaId: string, tipo?: CategoriaTipo): Promise<Categoria[]> {
     return (await categoriaTable.list(empresaId))
       .filter((c) => c.ativo && (!tipo || c.tipo === tipo))
       .sort((a, b) => a.nome.localeCompare(b.nome));
   },
-  async create(empresaId: string, data: { nome: string; tipo: CategoriaTipo; ativo: boolean }) {
-    const c = await categoriaTable.create(empresaId, data);
+  async create(
+    empresaId: string,
+    data: { nome: string; tipo: CategoriaTipo; ativo: boolean; grupoId?: string | null }
+  ) {
+    const c = await categoriaTable.create(empresaId, {
+      nome: data.nome,
+      tipo: data.tipo,
+      ativo: data.ativo,
+      grupoId: data.grupoId ?? null,
+    });
     await logAudit({ empresaId, entidade: "Categoria", entidadeId: c.id, acao: "inclusao", descricao: `Categoria "${c.nome}" criada.` });
     return c;
   },
@@ -121,6 +190,49 @@ export const centroCustoService = {
 };
 
 // ---------------------------------------------------------------------------
+// Contas e Cartões
+// ---------------------------------------------------------------------------
+export type ContaFinanceiraInput = Omit<
+  ContaFinanceira,
+  "id" | "createdAt" | "updatedAt" | "empresaId"
+>;
+
+function descreveContaFinanceira(c: ContaFinanceira): string {
+  const titular = c.titular?.trim() ? ` (titular ${c.titular.trim()})` : "";
+  return c.tipo === "cartao_credito"
+    ? `Cartão "${c.nome}"${titular}`
+    : `Conta "${c.nome}"${titular}`;
+}
+
+export const contaFinanceiraService = {
+  async list(empresaId: string): Promise<ContaFinanceira[]> {
+    return (await contaFinanceiraTable.list(empresaId)).sort((a, b) =>
+      a.nome.localeCompare(b.nome)
+    );
+  },
+  async listAtivas(empresaId: string): Promise<ContaFinanceira[]> {
+    return (await contaFinanceiraTable.list(empresaId))
+      .filter((c) => c.ativo)
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+  },
+  async create(empresaId: string, data: ContaFinanceiraInput) {
+    const c = await contaFinanceiraTable.create(empresaId, data);
+    await logAudit({ empresaId, entidade: "ContaFinanceira", entidadeId: c.id, acao: "inclusao", descricao: `${descreveContaFinanceira(c)} cadastrado(a).` });
+    return c;
+  },
+  async update(empresaId: string, id: string, data: Partial<ContaFinanceira>) {
+    const c = await contaFinanceiraTable.update(empresaId, id, data);
+    await logAudit({ empresaId, entidade: "ContaFinanceira", entidadeId: id, acao: "alteracao", descricao: `${descreveContaFinanceira(c)} alterado(a).` });
+    return c;
+  },
+  async remove(empresaId: string, id: string) {
+    const c = await contaFinanceiraTable.find(empresaId, id);
+    await contaFinanceiraTable.remove(empresaId, id);
+    if (c) await logAudit({ empresaId, entidade: "ContaFinanceira", entidadeId: id, acao: "exclusao", descricao: `${descreveContaFinanceira(c)} excluído(a).` });
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Status derivado (vencida) — calculado em tempo de leitura
 // ---------------------------------------------------------------------------
 function isOverdue(dataVencimento: string): boolean {
@@ -144,10 +256,82 @@ export function withDerivedReceberStatus(c: ContaReceber): ContaReceber {
 // ---------------------------------------------------------------------------
 // Contas a Pagar
 // ---------------------------------------------------------------------------
+/** Campos de criação; extras da Fase 2 têm default para não quebrar callers legados. */
 type ContaPagarInput = Omit<
   ContaPagar,
-  "id" | "createdAt" | "updatedAt" | "empresaId" | "createdBy" | "valorPago" | "dataPagamento"
-> & { valorPago?: number; dataPagamento?: string | null };
+  | "id"
+  | "createdAt"
+  | "updatedAt"
+  | "empresaId"
+  | "createdBy"
+  | "valorPago"
+  | "dataPagamento"
+  | "contaFinanceiraId"
+  | "desconto"
+  | "juros"
+  | "numeroNf"
+  | "impostos"
+  | "parcelaNumero"
+  | "parcelaTotal"
+  | "grupoParcelamento"
+  | "recorrencia"
+  | "grupoRecorrencia"
+> & {
+  valorPago?: number;
+  dataPagamento?: string | null;
+  contaFinanceiraId?: string | null;
+  desconto?: number;
+  juros?: number;
+  numeroNf?: string;
+  impostos?: ImpostosRetidos | null;
+  parcelaNumero?: number | null;
+  parcelaTotal?: number | null;
+  grupoParcelamento?: string | null;
+  recorrencia?: RecorrenciaTipo | null;
+  grupoRecorrencia?: string | null;
+  /** Ao criar: gera N títulos mensais (parcelamento). Ignorado na edição. */
+  parcelas?: number;
+  /** Ao criar com `recorrencia`: quantas ocorrências gerar (inclui a primeira). */
+  recorrenciaOcorrencias?: number;
+};
+
+function normalizePagarExtras(data: ContaPagarInput) {
+  return {
+    desconto: data.desconto ?? 0,
+    juros: data.juros ?? 0,
+    numeroNf: data.numeroNf ?? "",
+    impostos: data.impostos ?? null,
+    parcelaNumero: data.parcelaNumero ?? null,
+    parcelaTotal: data.parcelaTotal ?? null,
+    grupoParcelamento: data.grupoParcelamento ?? null,
+    recorrencia: data.recorrencia ?? null,
+    grupoRecorrencia: data.grupoRecorrencia ?? null,
+  };
+}
+
+async function insertPagar(
+  empresaId: string,
+  data: ContaPagarInput,
+  overrides: Partial<ContaPagar> = {}
+): Promise<ContaPagar> {
+  const extras = normalizePagarExtras(data);
+  const {
+    parcelas: _p,
+    recorrenciaOcorrencias: _r,
+    ...rest
+  } = data;
+  void _p;
+  void _r;
+  return contaPagarTable.create(empresaId, {
+    ...rest,
+    ...extras,
+    valorPago: data.valorPago ?? 0,
+    dataPagamento: data.dataPagamento ?? null,
+    contaFinanceiraId: data.contaFinanceiraId ?? null,
+    createdBy: getCurrentUser(),
+    ...overrides,
+  } as Omit<ContaPagar, "id" | "createdAt" | "updatedAt" | "empresaId">);
+}
 
 export const contaPagarService = {
   async list(empresaId: string): Promise<ContaPagar[]> {
@@ -159,14 +343,79 @@ export const contaPagarService = {
     const c = await contaPagarTable.find(empresaId, id);
     return c ? withDerivedPagarStatus(c) : undefined;
   },
-  async create(empresaId: string, data: ContaPagarInput) {
-    const c = await contaPagarTable.create(empresaId, {
-      ...data,
-      valorPago: data.valorPago ?? 0,
-      dataPagamento: data.dataPagamento ?? null,
-      createdBy: getCurrentUser(),
-    } as Omit<ContaPagar, "id" | "createdAt" | "updatedAt" | "empresaId">);
-    await logAudit({ empresaId, entidade: "ContaPagar", entidadeId: c.id, acao: "inclusao", descricao: `Conta a pagar p/ "${c.fornecedor}" criada.` });
+  /**
+   * Cria um título. Com `parcelas` > 1 gera série parcelada; com `recorrencia` +
+   * `recorrenciaOcorrencias` > 1 gera série recorrente. Parcelamento tem prioridade.
+   * Retorna o primeiro título da série (quando aplicável).
+   */
+  async create(empresaId: string, data: ContaPagarInput): Promise<ContaPagar> {
+    const parcelas = Math.max(1, Math.floor(data.parcelas ?? 1));
+    const ocorrencias = Math.max(1, Math.floor(data.recorrenciaOcorrencias ?? 1));
+
+    if (parcelas > 1) {
+      const grupo = uid();
+      const valores = splitParcelas(data.valor, parcelas);
+      const criadas: ContaPagar[] = [];
+      for (let i = 0; i < parcelas; i++) {
+        const c = await insertPagar(empresaId, data, {
+          valor: valores[i],
+          parcelaNumero: i + 1,
+          parcelaTotal: parcelas,
+          grupoParcelamento: grupo,
+          dataVencimento: addMonthsIso(data.dataVencimento, i),
+          dataCompetencia: addMonthsIso(data.dataCompetencia, i),
+          recorrencia: null,
+          grupoRecorrencia: null,
+        });
+        criadas.push(c);
+      }
+      await logAudit({
+        empresaId,
+        entidade: "ContaPagar",
+        entidadeId: criadas[0].id,
+        acao: "inclusao",
+        descricao: `Parcelamento (${parcelas}x) p/ "${data.fornecedor}" criado.`,
+      });
+      return criadas[0];
+    }
+
+    if (data.recorrencia && ocorrencias > 1) {
+      const grupo = uid();
+      const criadas: ContaPagar[] = [];
+      let venc = data.dataVencimento;
+      let comp = data.dataCompetencia;
+      for (let i = 0; i < ocorrencias; i++) {
+        const c = await insertPagar(empresaId, data, {
+          dataVencimento: venc,
+          dataCompetencia: comp,
+          recorrencia: data.recorrencia,
+          grupoRecorrencia: grupo,
+          parcelaNumero: null,
+          parcelaTotal: null,
+          grupoParcelamento: null,
+        });
+        criadas.push(c);
+        venc = avancarRecorrencia(venc, data.recorrencia);
+        comp = avancarRecorrencia(comp, data.recorrencia);
+      }
+      await logAudit({
+        empresaId,
+        entidade: "ContaPagar",
+        entidadeId: criadas[0].id,
+        acao: "inclusao",
+        descricao: `Série recorrente (${ocorrencias}× ${data.recorrencia}) p/ "${data.fornecedor}" criada.`,
+      });
+      return criadas[0];
+    }
+
+    const c = await insertPagar(empresaId, data);
+    await logAudit({
+      empresaId,
+      entidade: "ContaPagar",
+      entidadeId: c.id,
+      acao: "inclusao",
+      descricao: `Conta a pagar p/ "${c.fornecedor}" criada.`,
+    });
     return c;
   },
   async update(empresaId: string, id: string, data: Partial<ContaPagar>) {
@@ -174,19 +423,48 @@ export const contaPagarService = {
     await logAudit({ empresaId, entidade: "ContaPagar", entidadeId: id, acao: "alteracao", descricao: `Conta a pagar p/ "${c.fornecedor}" alterada.` });
     return c;
   },
-  async registrarPagamento(empresaId: string, id: string, valor: number, data: string) {
+  /** Pagamento avulso: baixa parcial ou total + linha em `pagamentos_conta`. */
+  async registrarPagamento(
+    empresaId: string,
+    id: string,
+    valor: number,
+    data: string,
+    observacao = ""
+  ) {
     const atual = await contaPagarTable.find(empresaId, id);
     if (!atual) throw new Error("Conta não encontrada.");
     if (valor <= 0) throw new Error("O valor do pagamento deve ser positivo.");
-    const valorPago = Math.min(atual.valor, atual.valorPago + valor);
-    const quitada = valorPago >= atual.valor - 0.001;
+    const devido = valorDevido(atual);
+    const saldo = Math.max(0, devido - (atual.valorPago ?? 0));
+    if (valor > saldo + 0.001) {
+      throw new Error(`Valor excede o saldo em aberto (${saldo.toFixed(2)}).`);
+    }
+    const valorPago = Number(((atual.valorPago ?? 0) + valor).toFixed(2));
+    const quitada = valorPago >= devido - 0.001;
     const c = await contaPagarTable.update(empresaId, id, {
       valorPago,
       dataPagamento: quitada ? data : atual.dataPagamento ?? data,
       status: quitada ? "paga" : "parcial",
     });
-    await logAudit({ empresaId, entidade: "ContaPagar", entidadeId: id, acao: "baixa", descricao: `Pagamento de ${valor} registrado (${c.status}).` });
+    await pagamentoContaTable.create(empresaId, {
+      contaPagarId: id,
+      data,
+      valor,
+      observacao,
+    });
+    await logAudit({
+      empresaId,
+      entidade: "ContaPagar",
+      entidadeId: id,
+      acao: "baixa",
+      descricao: `Pagamento de ${valor} registrado (${c.status}).`,
+    });
     return c;
+  },
+  async listPagamentos(empresaId: string, contaPagarId: string): Promise<PagamentoConta[]> {
+    return (await pagamentoContaTable.list(empresaId))
+      .filter((p) => p.contaPagarId === contaPagarId)
+      .sort((a, b) => a.data.localeCompare(b.data) || a.createdAt.localeCompare(b.createdAt));
   },
   async cancelar(empresaId: string, id: string) {
     const c = await contaPagarTable.update(empresaId, id, { status: "cancelada" });

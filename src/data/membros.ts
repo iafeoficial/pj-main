@@ -18,17 +18,7 @@ export interface Convite {
   email: string;
   papel: Papel;
   status: string;
-  token: string;
   createdAt: string;
-}
-
-export interface ConvitePreview {
-  id: string;
-  empresaId: string;
-  email: string;
-  papel: Papel;
-  status: string;
-  empresaNome: string;
 }
 
 function throwIf(error: { message: string } | null) {
@@ -90,46 +80,14 @@ export const conviteService = {
     return (data ?? []).map((r) => rowToEntity<Convite>(r));
   },
 
-  async create(empresaId: string, email: string, papel: Papel): Promise<Convite> {
-    const { data, error } = await db()
-      .from("convites")
-      .insert({ empresa_id: empresaId, email: email.trim(), papel })
-      .select("*")
-      .single();
+  async create(empresaId: string, email: string, papel: Papel) {
+    const { error } = await db().from("convites").insert({ empresa_id: empresaId, email: email.trim(), papel });
     throwIf(error);
-    const convite = rowToEntity<Convite>(data);
-    await logAudit({
-      empresaId,
-      entidade: "Convite",
-      entidadeId: convite.id,
-      acao: "inclusao",
-      descricao: `Convite criado para ${email} (${papel}).`,
-    });
-    return convite;
-  },
-
-  async buscarPorToken(token: string): Promise<ConvitePreview | null> {
-    const { data, error } = await db().rpc("get_invite_by_token", { p_token: token });
-    throwIf(error);
-    const row = (data as Record<string, unknown>[] | null)?.[0];
-    if (!row) return null;
-    return {
-      id: row.id as string,
-      empresaId: row.empresa_id as string,
-      email: row.email as string,
-      papel: row.papel as Papel,
-      status: row.status as string,
-      empresaNome: row.empresa_nome as string,
-    };
+    await logAudit({ empresaId, entidade: "Convite", entidadeId: null, acao: "inclusao", descricao: `Convite enviado para ${email} (${papel}).` });
   },
 
   async aceitar(conviteId: string) {
     const { error } = await db().rpc("accept_invite", { p_convite_id: conviteId });
-    throwIf(error);
-  },
-
-  async aceitarPorToken(token: string) {
-    const { error } = await db().rpc("accept_invite_by_token", { p_token: token });
     throwIf(error);
   },
 

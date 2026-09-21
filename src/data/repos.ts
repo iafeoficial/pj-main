@@ -5,13 +5,16 @@ import type {
   ContaPagar,
   Certificado,
   Cliente,
+  ContaFinanceira,
   ContaReceber,
   Documento,
   Empresa,
   EstoqueMovimento,
   ExtratoBancario,
   Fornecedor,
+  CategoriaGrupo,
   Oportunidade,
+  PagamentoConta,
   PedidoCompra,
   PedidoItem,
   PedidoVenda,
@@ -24,8 +27,11 @@ import { GlobalTable, OwnedTable } from "./db";
 
 export const empresaTable = new GlobalTable<Empresa>("empresas");
 export const categoriaTable = new OwnedTable<Categoria>("categorias");
+export const categoriaGrupoTable = new OwnedTable<CategoriaGrupo>("categoria_grupos");
 export const centroCustoTable = new OwnedTable<CentroCusto>("centros_custo");
+export const contaFinanceiraTable = new OwnedTable<ContaFinanceira>("contas_financeiras");
 export const contaPagarTable = new OwnedTable<ContaPagar>("contas_pagar");
+export const pagamentoContaTable = new OwnedTable<PagamentoConta>("pagamentos_conta");
 export const contaReceberTable = new OwnedTable<ContaReceber>("contas_receber");
 export const extratoTable = new OwnedTable<ExtratoBancario>("extratos_bancarios");
 export const transacaoTable = new OwnedTable<TransacaoBancaria>("transacoes_bancarias");

@@ -9,7 +9,6 @@ import {
 import { conciliacaoService, regraService } from "./conciliacao";
 import { clienteService, fornecedorService, vendedorService } from "./cadastros";
 import { produtoService } from "./estoque";
-import { oportunidadeService } from "./operacao";
 
 function dateOffset(days: number): string {
   const d = new Date();
@@ -25,6 +24,13 @@ export async function seedDemo(): Promise<string> {
     email: "financeiro@acme.com.br",
     telefone: "(11) 4000-0000",
     status: "ativa",
+    cep: "04547-130",
+    logradouro: "Av. Eng. Luís Carlos Berrini",
+    numero: "500",
+    complemento: "Conj. 101",
+    bairro: "Cidade Monções",
+    cidade: "São Paulo",
+    uf: "SP",
   });
   const id = empresa.id;
 
@@ -119,44 +125,63 @@ export async function seedDemo(): Promise<string> {
   });
 
   // Fase 5 — cadastros e produto de demonstração.
-  const [, clienteAlpha, vendedorJoao] = await Promise.all([
-    fornecedorService.create(id, { nome: "Distribuidora Central", cnpjCpf: "", email: "", telefone: "", ativo: true }),
-    clienteService.create(id, { nome: "Cliente Alpha LTDA", cnpjCpf: "", email: "contato@alpha.com.br", telefone: "(11) 99999-0001", ativo: true }),
-    vendedorService.create(id, { nome: "João Vendas", email: "", comissaoPercent: 5, ativo: true }),
+  await Promise.all([
+    fornecedorService.create(id, {
+      tipoPessoa: "pj",
+      nome: "Distribuidora Central LTDA",
+      nomeFantasia: "Distribuidora Central",
+      cnpjCpf: "11.222.333/0001-81",
+      contatoNome: "Carlos Supply",
+      email: "compras@distcentral.com.br",
+      telefone: "(11) 9 8765-4321",
+      cep: "01310-100",
+      logradouro: "Av. Paulista",
+      numero: "1000",
+      complemento: "Sala 12",
+      bairro: "Bela Vista",
+      cidade: "São Paulo",
+      uf: "SP",
+      observacao: "Fornecedor preferencial de insumos.",
+      ativo: true,
+    }),
+    clienteService.create(id, {
+      tipoPessoa: "pj",
+      nome: "Cliente Alpha LTDA",
+      nomeFantasia: "Alpha Consultoria",
+      cnpjCpf: "22.333.444/0001-55",
+      contatoNome: "Ana Alpha",
+      email: "contato@alpha.com.br",
+      telefone: "(11) 9 1234-5678",
+      cep: "04547-130",
+      logradouro: "Av. Eng. Luís Carlos Berrini",
+      numero: "800",
+      complemento: "",
+      bairro: "Cidade Monções",
+      cidade: "São Paulo",
+      uf: "SP",
+      observacao: "Cliente recorrente de consultoria.",
+      ativo: true,
+    }),
+    vendedorService.create(id, {
+      nome: "João Vendas",
+      email: "joao.vendas@acme.com.br",
+      telefone: "(11) 9 5555-1234",
+      cpf: "123.456.789-00",
+      comissaoPercent: 5,
+      observacao: "Região metropolitana de SP.",
+      ativo: true,
+    }),
     produtoService.create(id, {
       nome: "Serviço de Consultoria (hora)",
       sku: "SVC-001",
-      unidade: "h",
+      unidade: "hr",
+      descricao: "Hora de consultoria especializada em finanças corporativas.",
       precoVenda: 250,
       custoMedio: 0,
       estoqueAtual: 0,
       controlaEstoque: false,
+      observacao: "Serviço intangível — sem controle de estoque.",
       ativo: true,
-    }),
-  ]);
-
-  await Promise.all([
-    oportunidadeService.create(id, {
-      titulo: "Projeto consultoria Q3",
-      clienteId: clienteAlpha.id,
-      clienteNome: clienteAlpha.nome,
-      vendedorId: vendedorJoao.id,
-      contato: clienteAlpha.telefone,
-      valorEstimado: 18000,
-      estagio: "proposta",
-      observacao: "Escopo de 3 meses — aguardando PO",
-      pedidoVendaId: null,
-    }),
-    oportunidadeService.create(id, {
-      titulo: "Suporte mensal Alpha",
-      clienteId: clienteAlpha.id,
-      clienteNome: clienteAlpha.nome,
-      vendedorId: vendedorJoao.id,
-      contato: clienteAlpha.email,
-      valorEstimado: 4500,
-      estagio: "lead",
-      observacao: "Renovação anual",
-      pedidoVendaId: null,
     }),
   ]);
 

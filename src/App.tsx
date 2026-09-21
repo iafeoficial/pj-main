@@ -1,18 +1,15 @@
-import type { ReactNode } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { EmpresaProvider } from "@/context/EmpresaContext";
-import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { AppShell } from "@/components/AppShell";
-import { RequireCapability } from "@/components/RequireCapability";
-import type { Capability } from "@/lib/rbac";
 import { LoginPage } from "@/pages/LoginPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { EmpresasPage } from "@/pages/EmpresasPage";
 import { CategoriasPage } from "@/pages/CategoriasPage";
 import { CentrosCustoPage } from "@/pages/CentrosCustoPage";
+import { ContasCartoesPage } from "@/pages/ContasCartoesPage";
 import { ContasPagarPage } from "@/pages/ContasPagarPage";
 import { ContasReceberPage } from "@/pages/ContasReceberPage";
 import { FluxoCaixaPage } from "@/pages/FluxoCaixaPage";
@@ -23,6 +20,7 @@ import { RegrasPage } from "@/pages/RegrasPage";
 import { DocumentosPage } from "@/pages/DocumentosPage";
 import { ExportacaoContabilPage } from "@/pages/ExportacaoContabilPage";
 import { CertificadosPage } from "@/pages/CertificadosPage";
+import { FiscalPage } from "@/pages/FiscalPage";
 import { FornecedoresPage } from "@/pages/FornecedoresPage";
 import { ClientesPage } from "@/pages/ClientesPage";
 import { VendedoresPage } from "@/pages/VendedoresPage";
@@ -34,10 +32,7 @@ import { CrmPage } from "@/pages/CrmPage";
 import { ComissoesPage } from "@/pages/ComissoesPage";
 import { MembrosPage } from "@/pages/MembrosPage";
 import { AuditoriaPage } from "@/pages/AuditoriaPage";
-
-function CapRoute({ cap, children }: { cap: Capability; children: ReactNode }) {
-  return <RequireCapability cap={cap} redirect>{children}</RequireCapability>;
-}
+import { RequireCapability } from "@/components/RequireCapability";
 
 function Gate() {
   const { session, loading } = useAuth();
@@ -57,32 +52,32 @@ function Gate() {
       <Routes>
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
-          <Route path="contas-pagar" element={<CapRoute cap="financeiro"><ContasPagarPage /></CapRoute>} />
-          <Route path="contas-receber" element={<CapRoute cap="financeiro"><ContasReceberPage /></CapRoute>} />
-          <Route path="fluxo-caixa" element={<CapRoute cap="financeiro"><FluxoCaixaPage /></CapRoute>} />
-          <Route path="conciliacao" element={<CapRoute cap="conciliacao"><ConciliacaoPage /></CapRoute>} />
-          <Route path="regras-conciliacao" element={<CapRoute cap="conciliacao"><RegrasPage /></CapRoute>} />
-          <Route path="relatorios" element={<CapRoute cap="financeiro"><RelatoriosPage /></CapRoute>} />
-          <Route path="dre" element={<CapRoute cap="financeiro"><DREPage /></CapRoute>} />
-          <Route path="documentos" element={<CapRoute cap="documentos"><DocumentosPage /></CapRoute>} />
-          <Route path="exportacao-contabil" element={<CapRoute cap="fiscal"><ExportacaoContabilPage /></CapRoute>} />
-          <Route path="certificados" element={<CapRoute cap="fiscal"><CertificadosPage /></CapRoute>} />
-          <Route path="fornecedores" element={<CapRoute cap="compras"><FornecedoresPage /></CapRoute>} />
-          <Route path="clientes" element={<CapRoute cap="vendas"><ClientesPage /></CapRoute>} />
-          <Route path="vendedores" element={<CapRoute cap="vendas"><VendedoresPage /></CapRoute>} />
-          <Route path="produtos" element={<CapRoute cap="estoque"><ProdutosPage /></CapRoute>} />
-          <Route path="estoque" element={<CapRoute cap="estoque"><EstoquePage /></CapRoute>} />
-          <Route path="compras" element={<CapRoute cap="compras"><ComprasPage /></CapRoute>} />
-          <Route path="vendas" element={<CapRoute cap="vendas"><VendasPage /></CapRoute>} />
-          <Route path="crm" element={<CapRoute cap="vendas"><CrmPage /></CapRoute>} />
-          <Route path="comissoes" element={<CapRoute cap="vendas"><ComissoesPage /></CapRoute>} />
+          <Route path="contas-pagar" element={<ContasPagarPage />} />
+          <Route path="contas-receber" element={<ContasReceberPage />} />
+          <Route path="fluxo-caixa" element={<FluxoCaixaPage />} />
+          <Route path="conciliacao" element={<ConciliacaoPage />} />
+          <Route path="regras-conciliacao" element={<RegrasPage />} />
+          <Route path="relatorios" element={<RelatoriosPage />} />
+          <Route path="dre" element={<DREPage />} />
+          <Route path="documentos" element={<DocumentosPage />} />
+          <Route path="exportacao-contabil" element={<ExportacaoContabilPage />} />
+          <Route path="certificados" element={<CertificadosPage />} />
+          <Route path="fiscal" element={<FiscalPage />} />
+          <Route path="fornecedores" element={<FornecedoresPage />} />
+          <Route path="clientes" element={<ClientesPage />} />
+          <Route path="vendedores" element={<VendedoresPage />} />
+          <Route path="produtos" element={<ProdutosPage />} />
+          <Route path="estoque" element={<EstoquePage />} />
+          <Route path="compras" element={<ComprasPage />} />
+          <Route path="vendas" element={<VendasPage />} />
+          <Route path="crm" element={<CrmPage />} />
+          <Route path="comissoes" element={<ComissoesPage />} />
           <Route path="empresas" element={<EmpresasPage />} />
-          <Route path="equipe" element={<CapRoute cap="admin"><MembrosPage /></CapRoute>} />
-          <Route path="categorias" element={<CapRoute cap="cadastros"><CategoriasPage /></CapRoute>} />
-          <Route path="centros-custo" element={<CapRoute cap="cadastros"><CentrosCustoPage /></CapRoute>} />
-          <Route path="auditoria" element={<CapRoute cap="auditoria"><AuditoriaPage /></CapRoute>} />
-          <Route path="open-finance" element={<Navigate to="/" replace />} />
-          <Route path="fiscal" element={<Navigate to="/" replace />} />
+          <Route path="equipe" element={<RequireCapability cap="admin"><MembrosPage /></RequireCapability>} />
+          <Route path="categorias" element={<CategoriasPage />} />
+          <Route path="centros-custo" element={<CentrosCustoPage />} />
+          <Route path="contas-cartoes" element={<ContasCartoesPage />} />
+          <Route path="auditoria" element={<AuditoriaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
@@ -92,12 +87,10 @@ function Gate() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <ToastProvider>
-        <AuthProvider>
-          <Gate />
-        </AuthProvider>
-      </ToastProvider>
-    </ThemeProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </ToastProvider>
   );
 }

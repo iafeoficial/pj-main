@@ -1,19 +1,54 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Pencil, Plus, Trash2, CheckCircle2, Ban } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { Categoria, CategoriaTipo, CentroCusto } from "@/types/domain";
-import { categoriaService, centroCustoService } from "@/data/services";
+import type {
+  Categoria,
+  CategoriaGrupo,
+  CategoriaTipo,
+  CentroCusto,
+  ContaFinanceira,
+  ImpostosRetidos,
+  PagamentoConta,
+  RecorrenciaTipo,
+} from "@/types/domain";
+import { categoriaService, centroCustoService, contaFinanceiraService, categoriaGrupoService } from "@/data/services";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useFormDraft } from "@/hooks/useFormDraft";
 import { formatBRL, formatDate, today } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { EntityLink } from "@/components/EntityLink";
+import { parseContaOrigem, resolveIdByPrefix } from "@/lib/entityLinks";
+import { proximoVencimentoFatura } from "@/lib/fatura";
+import { labelContaFinanceira } from "@/lib/contaFinanceira";
+import { totalImpostosRetidos } from "@/lib/contaPagarExtras";
+import { compraService, vendaService } from "@/data/operacao";
+import { clienteService, fornecedorService } from "@/data/cadastros";
+import {
+  getPerfilLancamento,
+  getPessoaLabel,
+  getPessoaPlaceholder,
+  getDefaultPessoa,
+  hidePessoaField,
+  pessoaRequired,
+  showVincularCadastro,
+  validateByPerfil,
+} from "@/lib/contaCategoriaPerfil";
+import {
+  emptyImpostos,
+  HistoricoPagamentos,
+  ImpostosFields,
+  ParcelasRepeticaoFields,
+} from "@/features/contas/ContasPagarExtras";
 
 /** Forma comum de uma conta a pagar/receber para a UI. */
 export interface ContaLike {
@@ -22,8 +57,18 @@ export interface ContaLike {
   pessoa: string; // fornecedor ou cliente
   categoriaId: string | null;
   centroCustoId: string | null;
+  contaFinanceiraId?: string | null;
   valor: number;
   valorBaixado: number; // valorPago ou valorRecebido
+  /** Valor devido (bruto − desconto + juros − impostos). Só Contas a Pagar. */
+  valorDevido?: number;
+  desconto?: number;
+  juros?: number;
+  numeroNf?: string;
+  impostos?: ImpostosRetidos | null;
+  parcelaNumero?: number | null;
+  parcelaTotal?: number | null;
+  recorrencia?: RecorrenciaTipo | null;
   dataCompetencia: string;
   dataVencimento: string;
   dataBaixa: string | null;
@@ -35,8 +80,14 @@ export interface ContasConfig {
   titulo: string;
   subtitulo: string;
   icon: LucideIcon;
-  pessoaLabel: string; // "Fornecedor" | "Cliente"
+  pessoaLabel: string; // "Beneficiário" | "Cliente"
+  /** Carrega fornecedores ou clientes ativos para o select do modal. */
+  pessoaCadastro?: "fornecedor" | "cliente";
   categoriaTipo: CategoriaTipo; // despesa | receita
+  /** Exibe o select de conta/cartão (Contas a Pagar). */
+  usaContaFinanceira?: boolean;
+  /** Campos extras Fase 2 (só Contas a Pagar). */
+  extrasPagar?: boolean;
   baixaLabel: string; // "Registrar pagamento" | "Registrar recebimento"
   statusBaixado: string; // "paga" | "recebida"
   // Operações (mapeiam para os services específicos) — assíncronas (Supabase)
@@ -44,6 +95,7 @@ export interface ContasConfig {
   create: (empresaId: string, input: ContaFormData) => Promise<unknown>;
   update: (empresaId: string, id: string, input: ContaFormData) => Promise<unknown>;
   baixar: (empresaId: string, id: string, valor: number, data: string) => Promise<unknown>;
+  listPagamentos?: (empresaId: string, id: string) => Promise<PagamentoConta[]>;
   cancelar: (empresaId: string, id: string) => Promise<unknown>;
   remove: (empresaId: string, id: string) => Promise<unknown>;
 }
@@ -52,34 +104,57 @@ export interface ContaFormData {
   pessoa: string;
   categoriaId: string | null;
   centroCustoId: string | null;
+  contaFinanceiraId: string | null;
   valor: number;
   dataCompetencia: string;
   dataVencimento: string;
   status: "rascunho" | "aberta";
   observacao: string;
+  // Fase 2 — Contas a Pagar
+  desconto: number;
+  juros: number;
+  numeroNf: string;
+  impostos: ImpostosRetidos | null;
+  parcelas: number;
+  recorrencia: RecorrenciaTipo | null;
+  recorrenciaOcorrencias: number;
 }
+
+type FormTab = "dados" | "impostos" | "parcelas" | "historico";
 
 const EMPTY_FORM = (): ContaFormData => ({
   pessoa: "",
   categoriaId: null,
   centroCustoId: null,
+  contaFinanceiraId: null,
   valor: 0,
   dataCompetencia: today(),
   dataVencimento: today(),
   status: "aberta",
   observacao: "",
+  desconto: 0,
+  juros: 0,
+  numeroNf: "",
+  impostos: null,
+  parcelas: 1,
+  recorrencia: null,
+  recorrenciaOcorrencias: 1,
 });
 
 export function ContasModule({
   empresaId,
   config,
+  readOnly = false,
 }: {
   empresaId: string;
   config: ContasConfig;
+  readOnly?: boolean;
 }) {
   const { version, bumpData } = useEmpresa();
-  const { canWrite } = usePermissions();
   const { notify } = useToast();
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get("id");
+  const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
   // `version` é a chave de invalidação de cache após mutações de dados.
   const { data: contas } = useAsyncData(
@@ -92,76 +167,259 @@ export function ContasModule({
     [empresaId, version, config.categoriaTipo],
     [] as Categoria[]
   );
+  const { data: gruposCat } = useAsyncData(
+    () => categoriaGrupoService.listAtivos(empresaId, config.categoriaTipo),
+    [empresaId, version, config.categoriaTipo],
+    [] as CategoriaGrupo[]
+  );
   const { data: centros } = useAsyncData(
     () => centroCustoService.listAtivos(empresaId),
     [empresaId, version],
     [] as CentroCusto[]
+  );
+  const { data: contasFinanceiras } = useAsyncData(
+    () =>
+      config.usaContaFinanceira
+        ? contaFinanceiraService.listAtivas(empresaId)
+        : Promise.resolve([] as ContaFinanceira[]),
+    [empresaId, version, config.usaContaFinanceira],
+    [] as ContaFinanceira[]
   );
   const { data: todasCategorias } = useAsyncData(
     () => categoriaService.list(empresaId),
     [empresaId, version],
     [] as Categoria[]
   );
+  const { data: compras } = useAsyncData(() => compraService.list(empresaId), [empresaId, version], []);
+  const { data: vendas } = useAsyncData(() => vendaService.list(empresaId), [empresaId, version], []);
+  const { data: pessoasCadastro } = useAsyncData(
+    () => {
+      if (config.pessoaCadastro === "fornecedor") return fornecedorService.listAtivos(empresaId);
+      if (config.pessoaCadastro === "cliente") return clienteService.listAtivos(empresaId);
+      return Promise.resolve([]);
+    },
+    [empresaId, version, config.pessoaCadastro],
+    [] as { id: string; nome: string }[]
+  );
   const catMap = useMemo(
     () => new Map(todasCategorias.map((c) => [c.id, c.nome])),
     [todasCategorias]
+  );
+  const grupoCatMap = useMemo(
+    () => new Map(gruposCat.map((g) => [g.id, g.nome])),
+    [gruposCat]
+  );
+  const contaFinMap = useMemo(
+    () => new Map(contasFinanceiras.map((c) => [c.id, c])),
+    [contasFinanceiras]
+  );
+
+  const categoriaOptions = useMemo(
+    () =>
+      categorias.map((c) => ({
+        value: c.id,
+        label:
+          c.grupoId && grupoCatMap.get(c.grupoId)
+            ? `${grupoCatMap.get(c.grupoId)} › ${c.nome}`
+            : c.nome,
+      })),
+    [categorias, grupoCatMap]
   );
 
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [wizardStep, setWizardStep] = useState<1 | 2>(1);
+  const [formTab, setFormTab] = useState<FormTab>("dados");
   const [form, setForm] = useState<ContaFormData>(EMPTY_FORM());
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [vincularCadastro, setVincularCadastro] = useState(false);
+  const [historico, setHistorico] = useState<PagamentoConta[]>([]);
 
   const [baixaConta, setBaixaConta] = useState<ContaLike | null>(null);
   const [baixaValor, setBaixaValor] = useState(0);
   const [baixaData, setBaixaData] = useState(today());
+  const [baixaHistorico, setBaixaHistorico] = useState<PagamentoConta[]>([]);
 
   const [toDelete, setToDelete] = useState<ContaLike | null>(null);
   const [toCancel, setToCancel] = useState<ContaLike | null>(null);
+
+  type ContaDraftExtra = {
+    wizardStep: 1 | 2;
+    vincularCadastro: boolean;
+    formTab: FormTab;
+  };
+
+  const { clearDraft } = useFormDraft<ContaFormData, ContaDraftExtra>(
+    `contas-${config.categoriaTipo}`,
+    {
+      open: modalOpen,
+      form,
+      editingId,
+      extra: { wizardStep, vincularCadastro, formTab },
+    },
+    (draft) => {
+      setForm({ ...EMPTY_FORM(), ...draft.form });
+      setEditingId(draft.editingId);
+      setWizardStep(draft.extra?.wizardStep ?? 1);
+      setVincularCadastro(draft.extra?.vincularCadastro ?? false);
+      setFormTab(draft.extra?.formTab ?? "dados");
+      setModalOpen(true);
+      notify("Rascunho restaurado.", "info");
+    }
+  );
 
   const filtradas = useMemo(
     () => (filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus)),
     [contas, filtroStatus]
   );
 
+  useEffect(() => {
+    if (!highlightId) return;
+    const el = rowRefs.current.get(highlightId);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId, filtradas]);
+
   const totais = useMemo(() => {
     const ativas = contas.filter((c) => c.status !== "cancelada");
-    const total = ativas.reduce((s, c) => s + c.valor, 0);
+    const total = ativas.reduce((s, c) => s + (c.valorDevido ?? c.valor), 0);
     const baixado = ativas.reduce((s, c) => s + c.valorBaixado, 0);
     const emAberto = ativas
       .filter((c) => c.status !== config.statusBaixado)
-      .reduce((s, c) => s + (c.valor - c.valorBaixado), 0);
+      .reduce((s, c) => s + ((c.valorDevido ?? c.valor) - c.valorBaixado), 0);
     return { total, baixado, emAberto };
   }, [contas, config.statusBaixado]);
 
+  function resolveVincularCadastro(nome: string): boolean {
+    if (!nome || !config.pessoaCadastro) return false;
+    return pessoasCadastro.some((p) => p.nome === nome);
+  }
+
+  const vincularCadastroLabel =
+    config.pessoaCadastro === "fornecedor"
+      ? "Vincular a fornecedor cadastrado"
+      : config.pessoaCadastro === "cliente"
+        ? "Vincular a cliente cadastrado"
+        : "";
+
+  const categoriaAtual = useMemo(
+    () => categorias.find((c) => c.id === form.categoriaId) ?? null,
+    [categorias, form.categoriaId]
+  );
+
+  const contaFinanceiraSelecionada = form.contaFinanceiraId
+    ? contaFinMap.get(form.contaFinanceiraId)
+    : undefined;
+
+  const perfil = getPerfilLancamento(categoriaAtual, config.categoriaTipo);
+  const pessoaFieldLabel = getPessoaLabel(perfil, config.categoriaTipo);
+  // No passo 1 a categoria ainda é desconhecida: usa o rótulo genérico (Favorecido/Pagador).
+  const pessoaStepLabel = getPessoaLabel("generico", config.categoriaTipo);
+
+  const devidoPreview = useMemo(() => {
+    if (!config.extrasPagar) return form.valor;
+    const retidos = totalImpostosRetidos(form.impostos);
+    return Math.max(0, Number((form.valor - form.desconto + form.juros - retidos).toFixed(2)));
+  }, [config.extrasPagar, form.valor, form.desconto, form.juros, form.impostos]);
+
+  function closeModal() {
+    clearDraft();
+    setModalOpen(false);
+    setWizardStep(1);
+    setFormTab("dados");
+    setHistorico([]);
+  }
+
   function openCreate() {
+    clearDraft();
     setEditingId(null);
     setForm(EMPTY_FORM());
     setErrors({});
+    setVincularCadastro(false);
+    setWizardStep(1);
+    setFormTab("dados");
+    setHistorico([]);
     setModalOpen(true);
   }
 
-  function openEdit(c: ContaLike) {
+  async function openEdit(c: ContaLike) {
+    clearDraft();
     setEditingId(c.id);
     setForm({
       pessoa: c.pessoa,
       categoriaId: c.categoriaId,
       centroCustoId: c.centroCustoId,
+      contaFinanceiraId: c.contaFinanceiraId ?? null,
       valor: c.valor,
       dataCompetencia: c.dataCompetencia,
       dataVencimento: c.dataVencimento,
       status: c.status === "rascunho" ? "rascunho" : "aberta",
       observacao: c.observacao,
+      desconto: c.desconto ?? 0,
+      juros: c.juros ?? 0,
+      numeroNf: c.numeroNf ?? "",
+      impostos: c.impostos ?? null,
+      parcelas: 1,
+      recorrencia: c.recorrencia ?? null,
+      recorrenciaOcorrencias: 1,
     });
     setErrors({});
+    setVincularCadastro(resolveVincularCadastro(c.pessoa));
+    setWizardStep(2);
+    setFormTab("dados");
     setModalOpen(true);
+    if (config.extrasPagar && config.listPagamentos) {
+      try {
+        setHistorico(await config.listPagamentos(empresaId, c.id));
+      } catch {
+        setHistorico([]);
+      }
+    }
+  }
+
+  function continueToStep2() {
+    setErrors({});
+    setWizardStep(2);
+    setFormTab("dados");
+  }
+
+  function backToStep1() {
+    setWizardStep(1);
+    setErrors({});
+  }
+
+  function handleCategoriaChange(categoriaId: string) {
+    const newCat = categorias.find((c) => c.id === categoriaId) ?? null;
+    const newPerfil = getPerfilLancamento(newCat, config.categoriaTipo);
+    const next: ContaFormData = { ...form, categoriaId: categoriaId || null };
+    if (hidePessoaField(newPerfil)) next.pessoa = "";
+    setForm(next);
+    if (!showVincularCadastro(newPerfil)) setVincularCadastro(false);
+  }
+
+  /**
+   * Ao escolher um cartão com dia de fatura, sugere o vencimento no próximo ciclo
+   * (a compra do mês entra na fatura do mês seguinte). A data continua editável.
+   */
+  function handleContaFinanceiraChange(contaFinanceiraId: string) {
+    const conta = contaFinanceiraId ? contaFinMap.get(contaFinanceiraId) : undefined;
+    const next: ContaFormData = { ...form, contaFinanceiraId: contaFinanceiraId || null };
+    if (conta?.tipo === "cartao_credito" && conta.diaVencimentoFatura) {
+      next.dataVencimento = proximoVencimentoFatura(
+        form.dataCompetencia || today(),
+        conta.diaVencimentoFatura
+      );
+    }
+    setForm(next);
   }
 
   function validate(): boolean {
-    const err: Record<string, string> = {};
-    if (!form.pessoa.trim()) err.pessoa = `Informe o ${config.pessoaLabel.toLowerCase()}.`;
+    const err: Record<string, string> = {
+      ...validateByPerfil(perfil, form, config.categoriaTipo),
+    };
+    // Na edição a categoria pode ser removida (lançamentos legados); na criação é obrigatória.
+    if (!editingId && !form.categoriaId) err.categoriaId = "Escolha a categoria.";
     if (!form.valor || form.valor <= 0) err.valor = "Informe um valor maior que zero.";
     if (!form.dataVencimento) err.dataVencimento = "Informe o vencimento.";
     setErrors(err);
@@ -170,25 +428,35 @@ export function ContasModule({
 
   async function save() {
     if (!validate()) return;
+    const payload: ContaFormData = { ...form };
+    if (hidePessoaField(perfil)) {
+      payload.pessoa = getDefaultPessoa(perfil, form);
+    }
     try {
       if (editingId) {
-        await config.update(empresaId, editingId, form);
+        await config.update(empresaId, editingId, payload);
         notify("Lançamento atualizado.");
       } else {
-        await config.create(empresaId, form);
+        await config.create(empresaId, payload);
         notify("Lançamento criado.");
       }
+      clearDraft();
       bumpData();
-      setModalOpen(false);
+      closeModal();
     } catch (e) {
       notify((e as Error).message, "error");
     }
   }
 
   function openBaixa(c: ContaLike) {
+    const devido = c.valorDevido ?? c.valor;
     setBaixaConta(c);
-    setBaixaValor(Number((c.valor - c.valorBaixado).toFixed(2)));
+    setBaixaValor(Number((devido - c.valorBaixado).toFixed(2)));
     setBaixaData(today());
+    setBaixaHistorico([]);
+    if (config.extrasPagar && config.listPagamentos) {
+      void config.listPagamentos(empresaId, c.id).then(setBaixaHistorico).catch(() => setBaixaHistorico([]));
+    }
   }
 
   async function confirmBaixa() {
@@ -235,7 +503,7 @@ export function ContasModule({
         title={config.titulo}
         subtitle={config.subtitulo}
         actions={
-          canWrite ? (
+          !readOnly ? (
             <button className="btn-primary" onClick={openCreate}>
               <Plus className="h-4 w-4" /> Novo lançamento
             </button>
@@ -271,7 +539,7 @@ export function ContasModule({
           title="Nenhum lançamento"
           description="Crie um lançamento ou ajuste o filtro de status."
           action={
-            canWrite ? (
+            !readOnly ? (
               <button className="btn-primary" onClick={openCreate}>
                 <Plus className="h-4 w-4" /> Novo lançamento
               </button>
@@ -285,6 +553,9 @@ export function ContasModule({
               <tr>
                 <th className="px-4 py-2.5 font-medium">{config.pessoaLabel}</th>
                 <th className="px-4 py-2.5 font-medium">Categoria</th>
+                {config.usaContaFinanceira && (
+                  <th className="px-4 py-2.5 font-medium">Conta / Cartão</th>
+                )}
                 <th className="px-4 py-2.5 font-medium">Vencimento</th>
                 <th className="px-4 py-2.5 text-right font-medium">Valor</th>
                 <th className="px-4 py-2.5 text-right font-medium">Saldo</th>
@@ -294,28 +565,66 @@ export function ContasModule({
             </thead>
             <tbody className="divide-y divide-border">
               {filtradas.map((c) => {
-                const saldo = c.valor - c.valorBaixado;
+                const devido = c.valorDevido ?? c.valor;
+                const saldo = devido - c.valorBaixado;
                 const baixavel = c.status !== config.statusBaixado && c.status !== "cancelada";
                 return (
-                  <tr key={c.id} className="hover:bg-muted/30">
+                  <tr
+                    key={c.id}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(c.id, el);
+                    }}
+                    className={`hover:bg-muted/30 ${c.id === highlightId ? "bg-primary/10 ring-2 ring-primary/30" : ""}`}
+                  >
                     <td className="px-4 py-3">
                       <div className="font-medium">{c.pessoa}</div>
+                      {c.parcelaNumero && c.parcelaTotal ? (
+                        <div className="text-xs text-muted-foreground">
+                          Parcela {c.parcelaNumero}/{c.parcelaTotal}
+                        </div>
+                      ) : null}
                       {c.observacao && (
                         <div className="text-xs text-muted-foreground">{c.observacao}</div>
                       )}
+                      {(() => {
+                        const ref = c.observacao ? parseContaOrigem(c.observacao) : null;
+                        if (!ref) return null;
+                        const ids = ref.type === "compra" ? compras.map((x) => x.id) : vendas.map((x) => x.id);
+                        const fullId = resolveIdByPrefix(ids, ref.prefix);
+                        if (!fullId) return null;
+                        return (
+                          <div className="mt-1">
+                            <EntityLink
+                              type={ref.type}
+                              id={fullId}
+                              label={`Origem: ${ref.type === "compra" ? "Compra" : "Venda"}`}
+                            />
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {c.categoriaId ? catMap.get(c.categoriaId) ?? "—" : "—"}
                     </td>
+                    {config.usaContaFinanceira && (
+                      <td className="px-4 py-3 text-muted-foreground">
+                      {c.contaFinanceiraId
+                        ? (() => {
+                            const cf = contaFinMap.get(c.contaFinanceiraId);
+                            return cf ? labelContaFinanceira(cf) : "—";
+                          })()
+                        : "—"}
+                    </td>
+                    )}
                     <td className="px-4 py-3">{formatDate(c.dataVencimento)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{formatBRL(c.valor)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{formatBRL(devido)}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{formatBRL(saldo)}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={c.status} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-1">
-                        {canWrite && baixavel && (
+                        {!readOnly && baixavel && (
                           <button
                             className="btn-outline btn-sm"
                             title={config.baixaLabel}
@@ -324,9 +633,9 @@ export function ContasModule({
                             <CheckCircle2 className="h-3.5 w-3.5" /> Baixar
                           </button>
                         )}
-                        {canWrite && (
+                        {!readOnly && (
                           <>
-                            <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(c)}>
+                            <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>
                               <Pencil className="h-4 w-4" />
                             </button>
                             {c.status !== "cancelada" && (
@@ -339,8 +648,7 @@ export function ContasModule({
                               </button>
                             )}
                             <button
-                              className="btn-ghost btn-sm btn-delete"
-                              title="Excluir"
+                              className="btn-ghost btn-sm text-destructive"
                               onClick={() => setToDelete(c)}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -360,107 +668,341 @@ export function ContasModule({
       {/* Modal de criação/edição */}
       <Modal
         open={modalOpen}
-        title={editingId ? "Editar lançamento" : "Novo lançamento"}
-        onClose={() => setModalOpen(false)}
-        width="max-w-xl"
+        title={
+          editingId
+            ? "Editar lançamento"
+            : wizardStep === 1
+              ? `Novo lançamento — ${pessoaStepLabel.toLowerCase()}`
+              : "Novo lançamento — dados"
+        }
+        onClose={closeModal}
+        width={config.extrasPagar ? "max-w-2xl" : "max-w-xl"}
         footer={
-          <>
-            <button className="btn-outline" onClick={() => setModalOpen(false)}>
-              Cancelar
-            </button>
-            <button className="btn-primary" onClick={save}>
-              Salvar
-            </button>
-          </>
+          !editingId && wizardStep === 1 ? (
+            <>
+              <button className="btn-outline" onClick={closeModal}>
+                Cancelar
+              </button>
+              <button className="btn-primary" onClick={continueToStep2}>
+                Continuar
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn-outline" onClick={closeModal}>
+                Cancelar
+              </button>
+              <button className="btn-primary" onClick={save}>
+                Salvar
+              </button>
+            </>
+          )
         }
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={config.pessoaLabel} required error={errors.pessoa} className="sm:col-span-2">
-            <input
-              className="input"
-              value={form.pessoa}
-              onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
-              autoFocus
-            />
+        {!editingId && wizardStep === 1 ? (
+          <Field
+            label={pessoaStepLabel}
+            hint="Comece pela pessoa do lançamento; a categoria e os valores vêm na próxima etapa."
+          >
+            {config.pessoaCadastro ? (
+              <div className="space-y-2">
+                {vincularCadastro ? (
+                  <Select
+                    value={form.pessoa}
+                    onChange={(v) => setForm({ ...form, pessoa: v })}
+                    options={[
+                      { value: "", label: "— selecione —" },
+                      ...pessoasCadastro.map((p) => ({ value: p.nome, label: p.nome })),
+                    ]}
+                  />
+                ) : (
+                  <input
+                    className="input"
+                    value={form.pessoa}
+                    onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                    placeholder={getPessoaPlaceholder("generico")}
+                    autoFocus
+                  />
+                )}
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border"
+                    checked={vincularCadastro}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setVincularCadastro(checked);
+                      if (checked && !pessoasCadastro.some((p) => p.nome === form.pessoa)) {
+                        setForm({ ...form, pessoa: "" });
+                      }
+                    }}
+                  />
+                  {vincularCadastroLabel}
+                </label>
+              </div>
+            ) : (
+              <input
+                className="input"
+                value={form.pessoa}
+                onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                placeholder={getPessoaPlaceholder("generico")}
+                autoFocus
+              />
+            )}
           </Field>
-          <Field label="Valor (R$)" required error={errors.valor}>
-            <input
-              className="input"
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.valor || ""}
-              onChange={(e) => setForm({ ...form, valor: Number(e.target.value) })}
-            />
-          </Field>
-          <Field label="Status">
-            <select
-              className="input"
-              value={form.status}
-              onChange={(e) =>
-                setForm({ ...form, status: e.target.value as ContaFormData["status"] })
-              }
-            >
-              <option value="aberta">Aberta</option>
-              <option value="rascunho">Rascunho</option>
-            </select>
-          </Field>
-          <Field label="Competência">
-            <input
-              className="input"
-              type="date"
-              value={form.dataCompetencia}
-              onChange={(e) => setForm({ ...form, dataCompetencia: e.target.value })}
-            />
-          </Field>
-          <Field label="Vencimento" required error={errors.dataVencimento}>
-            <input
-              className="input"
-              type="date"
-              value={form.dataVencimento}
-              onChange={(e) => setForm({ ...form, dataVencimento: e.target.value })}
-            />
-          </Field>
-          <Field label="Categoria">
-            <select
-              className="input"
-              value={form.categoriaId ?? ""}
-              onChange={(e) =>
-                setForm({ ...form, categoriaId: e.target.value || null })
-              }
-            >
-              <option value="">— sem categoria —</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Centro de custo">
-            <select
-              className="input"
-              value={form.centroCustoId ?? ""}
-              onChange={(e) =>
-                setForm({ ...form, centroCustoId: e.target.value || null })
-              }
-            >
-              <option value="">— sem centro —</option>
-              {centros.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Observação" className="sm:col-span-2">
-            <input
-              className="input"
-              value={form.observacao}
-              onChange={(e) => setForm({ ...form, observacao: e.target.value })}
-            />
-          </Field>
-        </div>
+        ) : (
+          <div className="space-y-4">
+            {config.extrasPagar && (
+              <div className="flex flex-wrap gap-1 border-b border-border pb-2">
+                {(
+                  [
+                    { id: "dados" as const, label: "Dados" },
+                    { id: "impostos" as const, label: "Impostos" },
+                    { id: "parcelas" as const, label: "Parcelas / repetição" },
+                    ...(editingId
+                      ? [{ id: "historico" as const, label: "Histórico" }]
+                      : []),
+                  ] satisfies { id: FormTab; label: string }[]
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setFormTab(tab.id)}
+                    className={`rounded-md px-3 py-1.5 text-sm ${
+                      formTab === tab.id
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {(!config.extrasPagar || formTab === "dados") && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field
+                  label="Categoria"
+                  required={!editingId}
+                  error={errors.categoriaId}
+                  className="sm:col-span-2"
+                >
+                  <Select
+                    value={form.categoriaId ?? ""}
+                    onChange={handleCategoriaChange}
+                    options={[
+                      { value: "", label: editingId ? "— sem categoria —" : "— selecione —" },
+                      ...categoriaOptions,
+                    ]}
+                  />
+                </Field>
+                {!editingId && (
+                  <div className="sm:col-span-2">
+                    <button
+                      type="button"
+                      className="text-sm text-primary hover:underline"
+                      onClick={backToStep1}
+                    >
+                      ← Voltar para {pessoaStepLabel.toLowerCase()}
+                    </button>
+                  </div>
+                )}
+                {!hidePessoaField(perfil) && (
+                  <Field
+                    label={pessoaFieldLabel}
+                    required={pessoaRequired(perfil)}
+                    error={errors.pessoa}
+                    className="sm:col-span-2"
+                  >
+                    {showVincularCadastro(perfil) && config.pessoaCadastro ? (
+                      <div className="space-y-2">
+                        {vincularCadastro ? (
+                          <Select
+                            value={form.pessoa}
+                            onChange={(v) => setForm({ ...form, pessoa: v })}
+                            options={[
+                              { value: "", label: "— selecione —" },
+                              ...pessoasCadastro.map((p) => ({ value: p.nome, label: p.nome })),
+                            ]}
+                          />
+                        ) : (
+                          <input
+                            className="input"
+                            value={form.pessoa}
+                            onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                            placeholder={getPessoaPlaceholder(perfil)}
+                          />
+                        )}
+                        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="rounded border-border"
+                            checked={vincularCadastro}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setVincularCadastro(checked);
+                              if (checked && !pessoasCadastro.some((p) => p.nome === form.pessoa)) {
+                                setForm({ ...form, pessoa: "" });
+                              }
+                            }}
+                          />
+                          {vincularCadastroLabel}
+                        </label>
+                      </div>
+                    ) : (
+                      <input
+                        className="input"
+                        value={form.pessoa}
+                        onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                        placeholder={getPessoaPlaceholder(perfil)}
+                      />
+                    )}
+                  </Field>
+                )}
+                <Field label="Valor (R$)" required error={errors.valor}>
+                  <input
+                    className="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.valor || ""}
+                    onChange={(e) => setForm({ ...form, valor: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label="Status">
+                  <Select
+                    value={form.status}
+                    onChange={(status) =>
+                      setForm({ ...form, status: status as ContaFormData["status"] })
+                    }
+                    options={[
+                      { value: "aberta", label: "Aberta" },
+                      { value: "rascunho", label: "Rascunho" },
+                    ]}
+                  />
+                </Field>
+                {config.extrasPagar && (
+                  <>
+                    <Field label="Desconto (R$)">
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.desconto || ""}
+                        onChange={(e) => setForm({ ...form, desconto: Number(e.target.value) || 0 })}
+                      />
+                    </Field>
+                    <Field label="Juros (R$)">
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={form.juros || ""}
+                        onChange={(e) => setForm({ ...form, juros: Number(e.target.value) || 0 })}
+                      />
+                    </Field>
+                    <Field label="Nº da NF" className="sm:col-span-2">
+                      <input
+                        className="input"
+                        value={form.numeroNf}
+                        onChange={(e) => setForm({ ...form, numeroNf: e.target.value })}
+                        placeholder="Número da nota fiscal"
+                      />
+                    </Field>
+                    {(form.desconto > 0 || form.juros > 0 || totalImpostosRetidos(form.impostos) > 0) && (
+                      <p className="sm:col-span-2 text-sm text-muted-foreground">
+                        Valor devido:{" "}
+                        <span className="font-medium text-foreground">{formatBRL(devidoPreview)}</span>
+                      </p>
+                    )}
+                  </>
+                )}
+                <Field label="Competência">
+                  <DatePicker
+                    value={form.dataCompetencia}
+                    onChange={(dataCompetencia) => setForm({ ...form, dataCompetencia })}
+                  />
+                </Field>
+                <Field label="Vencimento" required error={errors.dataVencimento}>
+                  <DatePicker
+                    value={form.dataVencimento}
+                    onChange={(dataVencimento) => setForm({ ...form, dataVencimento })}
+                  />
+                </Field>
+                {config.usaContaFinanceira && (
+                  <Field
+                    label="Conta / Cartão"
+                    hint={
+                      contaFinanceiraSelecionada?.tipo === "cartao_credito" &&
+                      contaFinanceiraSelecionada.diaVencimentoFatura
+                        ? `Fatura vence dia ${contaFinanceiraSelecionada.diaVencimentoFatura}${
+                            contaFinanceiraSelecionada.titular?.trim()
+                              ? ` · titular ${contaFinanceiraSelecionada.titular.trim()}`
+                              : ""
+                          } — vencimento sugerido no próximo ciclo.`
+                        : undefined
+                    }
+                  >
+                    <Select
+                      value={form.contaFinanceiraId ?? ""}
+                      onChange={handleContaFinanceiraChange}
+                      options={[
+                        { value: "", label: "— sem conta —" },
+                        ...contasFinanceiras.map((c) => ({
+                          value: c.id,
+                          label: labelContaFinanceira(c),
+                        })),
+                      ]}
+                    />
+                  </Field>
+                )}
+                <Field label="Centro de custo">
+                  <Select
+                    value={form.centroCustoId ?? ""}
+                    onChange={(centroCustoId) =>
+                      setForm({ ...form, centroCustoId: centroCustoId || null })
+                    }
+                    options={[
+                      { value: "", label: "— sem centro —" },
+                      ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                    ]}
+                  />
+                </Field>
+                <Field label="Observação" className="sm:col-span-2">
+                  <input
+                    className="input"
+                    value={form.observacao}
+                    onChange={(e) => setForm({ ...form, observacao: e.target.value })}
+                  />
+                </Field>
+              </div>
+            )}
+
+            {config.extrasPagar && formTab === "impostos" && (
+              <ImpostosFields
+                value={form.impostos ?? emptyImpostos()}
+                onChange={(impostos) => setForm({ ...form, impostos })}
+              />
+            )}
+
+            {config.extrasPagar && formTab === "parcelas" && (
+              <ParcelasRepeticaoFields
+                parcelas={form.parcelas}
+                recorrencia={form.recorrencia}
+                recorrenciaOcorrencias={form.recorrenciaOcorrencias}
+                editing={!!editingId}
+                onChange={(partial) => setForm({ ...form, ...partial })}
+              />
+            )}
+
+            {config.extrasPagar && formTab === "historico" && editingId && (
+              <HistoricoPagamentos items={historico} />
+            )}
+          </div>
+        )}
       </Modal>
 
       {/* Modal de baixa */}
@@ -484,8 +1026,13 @@ export function ContasModule({
             <p className="text-sm text-muted-foreground">
               Saldo em aberto:{" "}
               <span className="font-medium text-foreground">
-                {formatBRL(baixaConta.valor - baixaConta.valorBaixado)}
+                {formatBRL((baixaConta.valorDevido ?? baixaConta.valor) - baixaConta.valorBaixado)}
               </span>
+              {config.extrasPagar && (
+                <span className="mt-1 block text-xs">
+                  Pagamento avulso: informe um valor menor que o saldo para baixa parcial.
+                </span>
+              )}
             </p>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Valor (R$)" required>
@@ -499,14 +1046,17 @@ export function ContasModule({
                 />
               </Field>
               <Field label="Data">
-                <input
-                  className="input"
-                  type="date"
-                  value={baixaData}
-                  onChange={(e) => setBaixaData(e.target.value)}
-                />
+                <DatePicker value={baixaData} onChange={setBaixaData} />
               </Field>
             </div>
+            {config.extrasPagar && baixaHistorico.length > 0 && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                  Histórico de pagamentos
+                </p>
+                <HistoricoPagamentos items={baixaHistorico} />
+              </div>
+            )}
           </div>
         )}
       </Modal>

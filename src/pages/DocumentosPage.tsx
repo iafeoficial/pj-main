@@ -13,8 +13,11 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
+import { Select } from "@/components/ui/Select";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
+import { EntityLink } from "@/components/EntityLink";
 
 interface Revisao {
   tipo: DocumentoTipo;
@@ -237,6 +240,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                 <th className="px-4 py-2.5 text-right font-medium">Valor</th>
                 <th className="px-4 py-2.5 font-medium">Data</th>
                 <th className="px-4 py-2.5 font-medium">Situação</th>
+                <th className="px-4 py-2.5 font-medium">Financeiro</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -253,6 +257,13 @@ function Inner({ empresaId }: { empresaId: string }) {
                   <td className="px-4 py-3">{formatDate(d.dataDocumento)}</td>
                   <td className="px-4 py-3">
                     <span className="badge bg-emerald-100 text-emerald-700">{d.status}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {d.contaPagarId ? (
+                      <EntityLink type="conta-pagar" id={d.contaPagarId} label="Conta a pagar" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -302,40 +313,30 @@ function Inner({ empresaId }: { empresaId: string }) {
               />
             </Field>
             <Field label="Vencimento" required>
-              <input
-                className="input"
-                type="date"
+              <DatePicker
                 value={revisao.dataVencimento}
-                onChange={(e) => setRevisao({ ...revisao, dataVencimento: e.target.value })}
+                onChange={(dataVencimento) => setRevisao({ ...revisao, dataVencimento })}
               />
             </Field>
             <Field label="Categoria">
-              <select
-                className="input"
+              <Select
                 value={revisao.categoriaId}
-                onChange={(e) => setRevisao({ ...revisao, categoriaId: e.target.value })}
-              >
-                <option value="">— sem categoria —</option>
-                {categorias.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome}
-                  </option>
-                ))}
-              </select>
+                onChange={(categoriaId) => setRevisao({ ...revisao, categoriaId })}
+                options={[
+                  { value: "", label: "— sem categoria —" },
+                  ...categorias.map((c) => ({ value: c.id, label: c.nome })),
+                ]}
+              />
             </Field>
             <Field label="Centro de custo">
-              <select
-                className="input"
+              <Select
                 value={revisao.centroCustoId}
-                onChange={(e) => setRevisao({ ...revisao, centroCustoId: e.target.value })}
-              >
-                <option value="">— sem centro —</option>
-                {centros.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome}
-                  </option>
-                ))}
-              </select>
+                onChange={(centroCustoId) => setRevisao({ ...revisao, centroCustoId })}
+                options={[
+                  { value: "", label: "— sem centro —" },
+                  ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                ]}
+              />
             </Field>
             <Field label="Observação" className="sm:col-span-2">
               <input

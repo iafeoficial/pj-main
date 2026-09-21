@@ -28,10 +28,11 @@ dist-ssr
 # Build cache
 *.tsbuildinfo
 
-# Supabase CLI cache local
-supabase/.temp
-
 # Tarefas internas e config local do Claude Code
 TAREFAS*.md
 .claude/
 PROJETO_FINANCEIRO_PJ_MASTER.md
+
+# Supabase CLI local cache
+supabase/.temp/
+

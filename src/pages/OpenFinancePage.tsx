@@ -1,7 +1,8 @@
 import { Banknote, ShieldCheck, FileText, Link2 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { RequireEmpresa } from "@/components/RequireEmpresa";
 
-export function OpenFinancePage() {
+function OpenFinanceInner() {
   return (
     <>
       <PageHeader
@@ -45,6 +46,10 @@ export function OpenFinancePage() {
       </p>
     </>
   );
+}
+
+export function OpenFinancePage() {
+  return <RequireEmpresa>{() => <OpenFinanceInner />}</RequireEmpresa>;
 }
 
 function Requisito({

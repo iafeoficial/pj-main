@@ -1,36 +1,37 @@
-import { usePermissions } from "@/hooks/usePermissions";
-import { can, type Capability } from "@/lib/rbac";
-import { useEmpresa } from "@/context/EmpresaContext";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { ShieldAlert } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { EmptyState } from "./ui/EmptyState";
+import { useEmpresa } from "@/context/EmpresaContext";
+import { can, type Capability } from "@/lib/rbac";
 
-interface RequireCapabilityProps {
+/** Bloqueia rotas sensíveis quando o papel não tem a capability exigida. */
+export function RequireCapability({
+  cap,
+  children,
+}: {
   cap: Capability;
   children: ReactNode;
-  redirect?: boolean;
-}
+}) {
+  const { papel, loading } = useEmpresa();
+  const navigate = useNavigate();
 
-/** Bloqueia rota/conteúdo quando o papel não tem a capability. */
-export function RequireCapability({ cap, children, redirect }: RequireCapabilityProps) {
-  const { papel } = useEmpresa();
+  if (loading) return null;
+
   if (!can(papel, cap)) {
-    if (redirect) return <Navigate to="/" replace />;
     return (
       <EmptyState
         icon={ShieldAlert}
         title="Acesso restrito"
         description="Seu papel não tem permissão para acessar esta área."
+        action={
+          <button className="btn-primary" onClick={() => navigate("/")}>
+            Voltar ao início
+          </button>
+        }
       />
     );
   }
-  return <>{children}</>;
-}
 
-/** Desabilita ações de escrita quando o papel é somente leitura. */
-export function WriteGate({ children, fallback = null }: { children: ReactNode; fallback?: ReactNode }) {
-  const { canWrite } = usePermissions();
-  if (!canWrite) return <>{fallback}</>;
   return <>{children}</>;
 }

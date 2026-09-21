@@ -1,6 +1,8 @@
 import { ArrowDownCircle } from "lucide-react";
 import { contaReceberService } from "@/data/services";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
+import { useEmpresa } from "@/context/EmpresaContext";
+import { canWrite } from "@/lib/rbac";
 import {
   ContasModule,
   type ContasConfig,
@@ -12,6 +14,7 @@ const config: ContasConfig = {
   subtitulo: "Receitas e valores a receber de clientes.",
   icon: ArrowDownCircle,
   pessoaLabel: "Cliente",
+  pessoaCadastro: "cliente",
   categoriaTipo: "receita",
   baixaLabel: "Registrar recebimento",
   statusBaixado: "recebida",
@@ -61,7 +64,12 @@ const config: ContasConfig = {
 export function ContasReceberPage() {
   return (
     <RequireEmpresa>
-      {(id) => <ContasModule empresaId={id} config={config} />}
+      {(id) => <ContasReceberInner empresaId={id} />}
     </RequireEmpresa>
   );
+}
+
+function ContasReceberInner({ empresaId }: { empresaId: string }) {
+  const { papel } = useEmpresa();
+  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
 }

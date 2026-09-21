@@ -15,7 +15,6 @@ import {
   pedidoVendaTable,
   produtoTable,
   vendedorTable,
-  clienteTable,
 } from "./repos";
 import { contaPagarService, contaReceberService } from "./services";
 import { estoqueService } from "./estoque";
@@ -266,6 +265,54 @@ export async function getComissoes(empresaId: string, inicio: string, fim: strin
   return [...map.values()].sort((a, b) => b.comissao - a.comissao);
 }
 
+/** Gera contas a pagar para comissões do período (idempotente por vendedor/período). */
+export async function gerarContasComissao(
+  empresaId: string,
+  inicio: string,
+  fim: string,
+  opts: { categoriaId: string | null; dataVencimento: string }
+): Promise<{ geradas: number; ids: string[] }> {
+  const rows = await getComissoes(empresaId, inicio, fim);
+  const contasExistentes = await contaPagarService.list(empresaId);
+  const refTag = `Comissão ref. ${inicio} a ${fim}`;
+
+  const ids: string[] = [];
+  let geradas = 0;
+
+  for (const row of rows) {
+    if (row.comissao <= 0) continue;
+    const dup = contasExistentes.find(
+      (c) => c.observacao.includes(refTag) && c.fornecedor === row.vendedor
+    );
+    if (dup) continue;
+
+    const conta = await contaPagarService.create(empresaId, {
+      fornecedor: row.vendedor,
+      categoriaId: opts.categoriaId,
+      centroCustoId: null,
+      valor: row.comissao,
+      dataCompetencia: fim,
+      dataVencimento: opts.dataVencimento,
+      status: "aberta",
+      observacao: `${refTag} — ${row.vendedor}`,
+    });
+    ids.push(conta.id);
+    geradas++;
+  }
+
+  if (geradas > 0) {
+    await logAudit({
+      empresaId,
+      entidade: "ContaPagar",
+      entidadeId: ids[0],
+      acao: "inclusao",
+      descricao: `${geradas} conta(s) a pagar de comissão gerada(s) (${inicio} a ${fim}).`,
+    });
+  }
+
+  return { geradas, ids };
+}
+
 // ---------------------------------------------------------------------------
 // CRM — Oportunidades
 // ---------------------------------------------------------------------------
@@ -286,25 +333,20 @@ export const oportunidadeService = {
     await logAudit({ empresaId, entidade: "Oportunidade", entidadeId: id, acao: "exclusao", descricao: "Oportunidade excluída." });
   },
 
-  /** Converte oportunidade em orçamento de venda vinculado. */
-  async gerarOrcamento(empresaId: string, id: string) {
+  /** Converte oportunidade ganha em pedido de venda. */
+  async converterParaVenda(empresaId: string, id: string) {
     const op = await oportunidadeTable.find(empresaId, id);
     if (!op) throw new Error("Oportunidade não encontrada.");
-    if (op.pedidoVendaId) throw new Error("Esta oportunidade já possui orçamento/venda vinculada.");
-
-    let clienteNome = op.clienteNome;
-    if (op.clienteId) {
-      const c = await clienteTable.find(empresaId, op.clienteId);
-      if (c) clienteNome = c.nome;
-    }
+    if (op.estagio !== "ganho") throw new Error("A oportunidade precisa estar no estágio Ganho.");
+    if (op.pedidoVendaId) throw new Error("Já existe um pedido de venda vinculado.");
 
     const pedido = await vendaService.create(empresaId, {
       clienteId: op.clienteId,
-      clienteNome,
+      clienteNome: op.clienteNome,
       vendedorId: op.vendedorId,
-      status: "orcamento",
+      status: "pedido",
       data: today(),
-      observacao: op.observacao ? `CRM: ${op.titulo} — ${op.observacao}` : `CRM: ${op.titulo}`,
+      observacao: `Oportunidade: ${op.titulo}`,
       itens: [
         {
           produtoId: null,
@@ -315,18 +357,14 @@ export const oportunidadeService = {
       ],
     });
 
-    const atualizada = await oportunidadeTable.update(empresaId, id, {
-      pedidoVendaId: pedido.id,
-      estagio: "ganho",
-      clienteNome,
-    });
+    await oportunidadeTable.update(empresaId, id, { pedidoVendaId: pedido.id });
     await logAudit({
       empresaId,
       entidade: "Oportunidade",
       entidadeId: id,
       acao: "alteracao",
-      descricao: `Orçamento gerado a partir da oportunidade "${op.titulo}".`,
+      descricao: `Oportunidade convertida em venda ${pedido.id.slice(0, 8)}.`,
     });
-    return { oportunidade: atualizada, pedido };
+    return pedido;
   },
 };

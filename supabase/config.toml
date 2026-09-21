@@ -4,5 +4,7 @@ project_id = "financas-pj-app"
 [db]
 major_version = 17
 
+# Desabilita confirmação de e-mail no cadastro (dev local).
+# No projeto hospedado, desligue também em Dashboard → Auth → Providers → Email.
 [auth.email]
 enable_confirmations = false

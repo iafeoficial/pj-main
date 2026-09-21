@@ -1,22 +1,24 @@
-import { useMemo, useState, useEffect } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
 import { Building2, Pencil, Plus, Trash2, CheckCircle2, Mail } from "lucide-react";
 import type { Empresa } from "@/types/domain";
 import { empresaService } from "@/data/services";
 import { seedDemo } from "@/data/seed";
-import { conviteService, type Convite, type ConvitePreview } from "@/data/membros";
+import { conviteService, type Convite } from "@/data/membros";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAuth } from "@/context/AuthContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { PAPEL_LABEL } from "@/lib/rbac";
 import { formatCNPJ, isValidCNPJ } from "@/lib/utils";
+import { formatTelefone } from "@/lib/masks";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
+import { EnderecoFields, EMPTY_ENDERECO } from "@/components/EnderecoFields";
 
 interface FormState {
   cnpj: string;
@@ -25,6 +27,13 @@ interface FormState {
   email: string;
   telefone: string;
   status: "ativa" | "inativa";
+  cep: string;
+  logradouro: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
 }
 
 const EMPTY: FormState = {
@@ -34,14 +43,13 @@ const EMPTY: FormState = {
   email: "",
   telefone: "",
   status: "ativa",
+  ...EMPTY_ENDERECO,
 };
 
 export function EmpresasPage() {
-  const { empresas, empresaAtiva, version, refreshEmpresas, setEmpresaAtiva, bumpData } = useEmpresa();
+  const { empresas, empresaAtiva, version, refreshEmpresas, setEmpresaAtiva } = useEmpresa();
   const { user } = useAuth();
   const { notify } = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
 
   const { data: convitesPendentes } = useAsyncData(
     () => (user?.email ? conviteService.meusPendentes(user.email) : Promise.resolve([])),
@@ -49,47 +57,12 @@ export function EmpresasPage() {
     [] as Convite[]
   );
 
-  const [conviteToken, setConviteToken] = useState<ConvitePreview | null>(null);
-  const [conviteTokenLoading, setConviteTokenLoading] = useState(false);
-
-  useEffect(() => {
-    const token = searchParams.get("convite");
-    if (!token || !user) return;
-    setConviteTokenLoading(true);
-    conviteService
-      .buscarPorToken(token)
-      .then((preview) => {
-        if (!preview) {
-          notify("Convite inválido ou já utilizado.", "error");
-          setSearchParams({});
-          return;
-        }
-        if (user.email && preview.email.toLowerCase() !== user.email.toLowerCase()) {
-          notify(`Este convite é para ${preview.email}. Entre com esse e-mail.`, "error");
-          setSearchParams({});
-          return;
-        }
-        setConviteToken(preview);
-      })
-      .catch((e) => notify((e as Error).message, "error"))
-      .finally(() => setConviteTokenLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dispara ao abrir link com token
-  }, [searchParams, user]);
-
-  async function aceitarConvite(c: Convite | ConvitePreview, token?: string) {
+  async function aceitarConvite(c: Convite) {
     try {
-      if (token) {
-        await conviteService.aceitarPorToken(token);
-      } else {
-        await conviteService.aceitar(c.id);
-      }
+      await conviteService.aceitar(c.id);
       await refreshEmpresas();
       setEmpresaAtiva(c.empresaId);
-      bumpData();
-      setConviteToken(null);
-      setSearchParams({});
       notify("Convite aceito! Você agora tem acesso à empresa.");
-      navigate("/");
     } catch (e) {
       notify((e as Error).message, "error");
     }
@@ -117,8 +90,15 @@ export function EmpresasPage() {
       razaoSocial: e.razaoSocial,
       nomeFantasia: e.nomeFantasia,
       email: e.email,
-      telefone: e.telefone,
+      telefone: formatTelefone(e.telefone),
       status: e.status,
+      cep: e.cep ?? "",
+      logradouro: e.logradouro ?? "",
+      numero: e.numero ?? "",
+      complemento: e.complemento ?? "",
+      bairro: e.bairro ?? "",
+      cidade: e.cidade ?? "",
+      uf: e.uf ?? "",
     });
     setErrors({});
     setModalOpen(true);
@@ -195,14 +175,11 @@ export function EmpresasPage() {
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
             <Mail className="h-4 w-4 text-primary" /> Convites pendentes para você
           </div>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Aceite abaixo para acessar a empresa com o papel indicado.
-          </p>
           <ul className="space-y-2">
             {convitesPendentes.map((c) => (
               <li key={c.id} className="flex items-center justify-between gap-2 rounded-md bg-card px-3 py-2 text-sm">
                 <span>
-                  Convite como <strong>{PAPEL_LABEL[c.papel]}</strong>.
+                  Você foi convidado como <strong>{PAPEL_LABEL[c.papel]}</strong>.
                 </span>
                 <button className="btn-primary btn-sm" onClick={() => aceitarConvite(c)}>
                   Aceitar
@@ -212,42 +189,6 @@ export function EmpresasPage() {
           </ul>
         </div>
       )}
-
-      <Modal
-        open={!!conviteToken && !conviteTokenLoading}
-        title="Aceitar convite"
-        onClose={() => {
-          setConviteToken(null);
-          setSearchParams({});
-        }}
-        footer={
-          <>
-            <button
-              className="btn-outline"
-              onClick={() => {
-                setConviteToken(null);
-                setSearchParams({});
-              }}
-            >
-              Depois
-            </button>
-            <button
-              className="btn-primary"
-              onClick={() => conviteToken && aceitarConvite(conviteToken, searchParams.get("convite") ?? undefined)}
-            >
-              Aceitar convite
-            </button>
-          </>
-        }
-      >
-        {conviteToken && (
-          <p className="text-sm text-muted-foreground">
-            Você foi convidado para <strong>{conviteToken.empresaNome}</strong> como{" "}
-            <strong>{PAPEL_LABEL[conviteToken.papel]}</strong>. Ao aceitar, a empresa ficará disponível
-            no seletor superior.
-          </p>
-        )}
-      </Modal>
 
       {sorted.length === 0 ? (
         <EmptyState
@@ -272,6 +213,7 @@ export function EmpresasPage() {
               <tr>
                 <th className="px-4 py-2.5 font-medium">Empresa</th>
                 <th className="px-4 py-2.5 font-medium">CNPJ</th>
+                <th className="px-4 py-2.5 font-medium">Cidade</th>
                 <th className="px-4 py-2.5 font-medium">Contato</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
                 <th className="px-4 py-2.5 text-right font-medium">Ações</th>
@@ -292,6 +234,7 @@ export function EmpresasPage() {
                     <div className="text-xs text-muted-foreground">{e.razaoSocial}</div>
                   </td>
                   <td className="px-4 py-3">{formatCNPJ(e.cnpj)}</td>
+                  <td className="px-4 py-3">{e.cidade ? `${e.cidade}${e.uf ? `/${e.uf}` : ""}` : "—"}</td>
                   <td className="px-4 py-3">
                     <div>{e.email || "—"}</div>
                     <div className="text-xs text-muted-foreground">{e.telefone || ""}</div>
@@ -309,12 +252,11 @@ export function EmpresasPage() {
                           Selecionar
                         </button>
                       )}
-                      <button className="btn-ghost btn-sm btn-edit" title="Editar" onClick={() => openEdit(e)}>
+                      <button className="btn-ghost btn-sm" onClick={() => openEdit(e)}>
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
-                        className="btn-ghost btn-sm btn-delete"
-                        title="Excluir"
+                        className="btn-ghost btn-sm text-destructive"
                         onClick={() => setToDelete(e)}
                       >
                         <Trash2 className="h-4 w-4" />
@@ -331,6 +273,7 @@ export function EmpresasPage() {
       <Modal
         open={modalOpen}
         title={editing ? "Editar empresa" : "Nova empresa"}
+        width="max-w-2xl"
         onClose={() => setModalOpen(false)}
         footer={
           <>
@@ -367,16 +310,16 @@ export function EmpresasPage() {
             />
           </Field>
           <Field label="Status">
-            <select
-              className="input"
+            <Select
               value={form.status}
-              onChange={(e) =>
-                setForm({ ...form, status: e.target.value as FormState["status"] })
+              onChange={(status) =>
+                setForm({ ...form, status: status as FormState["status"] })
               }
-            >
-              <option value="ativa">Ativa</option>
-              <option value="inativa">Inativa</option>
-            </select>
+              options={[
+                { value: "ativa", label: "Ativa" },
+                { value: "inativa", label: "Inativa" },
+              ]}
+            />
           </Field>
           <Field label="E-mail" error={errors.email}>
             <input
@@ -388,10 +331,29 @@ export function EmpresasPage() {
           <Field label="Telefone">
             <input
               className="input"
+              inputMode="numeric"
               value={form.telefone}
-              onChange={(e) => setForm({ ...form, telefone: e.target.value })}
+              onChange={(e) => setForm({ ...form, telefone: formatTelefone(e.target.value) })}
             />
           </Field>
+
+          <h3 className="border-b border-border pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:col-span-2">
+            Endereço
+          </h3>
+          <div className="sm:col-span-2">
+            <EnderecoFields
+              value={{
+                cep: form.cep,
+                logradouro: form.logradouro,
+                numero: form.numero,
+                complemento: form.complemento,
+                bairro: form.bairro,
+                cidade: form.cidade,
+                uf: form.uf,
+              }}
+              onChange={(addr) => setForm({ ...form, ...addr })}
+            />
+          </div>
         </div>
       </Modal>
 

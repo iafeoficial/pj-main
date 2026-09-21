@@ -73,19 +73,79 @@ quebrar recursão de políticas), mas as políticas devem evitar recursão mútu
 `empresa_membros` — por isso os helpers consultam apenas `empresa_membros` e `empresas_select` usa
 `owner_id` inline + `user_is_member`.
 
+## ADR-011 — CRM integrado a cadastros e vendas
+**Decisão:** a tabela `oportunidades` passa a ter `cliente_id`, `vendedor_id` e `pedido_venda_id`
+(FKs opcionais). A UI seleciona cliente/vendedor dos cadastros; o estágio "ganho" pode gerar um
+pedido de venda via `oportunidadeService.converterParaVenda`.
+**Motivo:** alinhar repo e Supabase (migration `0013_crm_integracao`), fechar o pipeline comercial
+(CRM → Venda → Financeiro) e permitir links cruzados entre módulos.
+**Consequência:** `clienteNome` permanece como denormalização para exibição e oportunidades legadas
+sem FK continuam funcionando.
+
+## ADR-012 — Cadastros enriquecidos (operacional BR, sem fiscal avançado)
+**Decisão:** enriquecer cadastros de parceiros (clientes/fornecedores), vendedores, produtos,
+empresas e CRM com dados operacionais brasileiros: tipo PF/PJ, contato, endereço com CEP
+(ViaCEP no frontend), observações; CRM com previsão de fechamento e fonte do lead.
+**Fora de escopo nesta fase:** Inscrição Estadual/Municipal, NCM/CEST/CFOP e campos de emissão
+NF-e (fase fiscal futura).
+**Implementação:** migration `0015_cadastros_enriquecidos.sql`; tipos em `domain.ts`
+(`Endereco`, `TipoPessoa`, `FonteLead`); formulário compartilhado `ParceiroForm` +
+`EnderecoFields`; busca CEP via API pública ViaCEP (sem dependência npm).
+
+## ADR-013 — Contas e Cartões coexistem com Centro de Custo
+**Decisão:** criar a entidade `ContaFinanceira` (`contas_financeiras`), com `tipo`
+(`conta_corrente` | `cartao_credito`), dados bancários (agência/conta), dados de cartão
+(bandeira/dia de vencimento da fatura), titular/responsável e saldo de abertura opcional.
+Em `contas_pagar` foi adicionada a FK **nullable** `conta_financeira_id`; `centro_custo_id`
+**permanece** — as duas dimensões são complementares (centro de custo = rateio gerencial;
+conta/cartão = meio de pagamento).
+**Motivo:** a planilha de referência lança despesas por conta/cartão, e o vencimento de despesas de
+cartão segue o ciclo da fatura, não a data da compra. Remover centro de custo quebraria relatórios
+e DRE já existentes.
+**Implementação:** migration `0016_contas_financeiras.sql` com RLS no padrão das demais tabelas
+filhas (`_sel` por `user_is_member`, `_wr` por `user_can_write`); `contaFinanceiraService` em
+`src/data/services.ts`; página `/contas-cartoes` (capacidade `cadastros`). Ao escolher um cartão no
+Contas a Pagar, o vencimento é sugerido no **próximo ciclo da fatura** (`proximoVencimentoFatura`
+em `src/lib/fatura.ts`); a sugestão é apenas um valor padrão e pode ser editada. Titular:
+ver ADR-017.
+
+## ADR-014 — Contas a Pagar: extras financeiros (Fase 2)
+**Decisão:** estender `contas_pagar` com desconto, juros, nº da NF, impostos retidos (JSON),
+parcelamento (`grupo_parcelamento` + nº/total) e repetição (`recorrencia` + `grupo_recorrencia`).
+Histórico de baixas em tabela `pagamentos_conta`. Contas a Receber **fora do escopo**.
+**Motivo:** fechar o bloco da planilha de referência sem alterar o fluxo de receber.
+**Implementação:** migration `0017_contas_pagar_extras.sql`; `valorDevido` =
+bruto − desconto + juros − impostos retidos; pagamento avulso grava linha em `pagamentos_conta`
+e usa status `parcial`/`paga`. UI em abas no ContasModule (`extrasPagar`).
+
+## ADR-015 — Grupos de categoria e DRE hierárquica
+**Decisão:** entidade `CategoriaGrupo` (`categoria_grupos`) separada das categorias-folha;
+`categorias.grupo_id` nullable. Lançamentos usam só categorias; a DRE agrupa
+grupo → categorias → total (sem grupo = bloco "Sem grupo").
+**Motivo:** espelhar a planilha (ex.: Despesas Administrativas contendo folhas) sem misturar
+grupos no select de Contas a Pagar/Receber.
+**Implementação:** migration `0018_categoria_grupos.sql`; `categoriaGrupoService`; UI em
+Categorias; `getDRE` / `DREPage` com hierarquia.
+
+## ADR-016 — CPF/CNPJ do favorecido opcional (sem API Receita)
+**Decisão:** manter `cnpjCpf` opcional em fornecedor/cliente; cadastro sempre manual.
+Consulta à Receita/Serpro **não** integrada nesta leva — botão desabilitado
+("Buscar na Receita (em breve)") no `ParceiroForm`, pronto para plugar provedor depois.
+**Motivo:** fechar o pedido da planilha sem custo de API; o formulário não muda quando
+houver chave.
+
+## ADR-017 — Titular / responsável em Contas e Cartões
+**Decisão:** coluna `titular` (text, default `''`) em `contas_financeiras`. Na UI de cartão o
+campo é **obrigatório** (rótulo "Titular / responsável"); em conta corrente fica opcional.
+Selects de Contas a Pagar usam `labelContaFinanceira` (ex.: `Visa (Fatura) — Titular Ana`).
+**Motivo:** a planilha e o uso real exigem saber quem responde pelo cartão; o cadastro anterior
+só tinha bandeira/dia da fatura e o cartão ficava pouco distinto na lista.
+**Implementação:** migration `0019_contas_financeiras_titular.sql`; tipo em `domain.ts`;
+helper `src/lib/contaFinanceira.ts`; formulário com seção dedicada de cartão em
+`ContasCartoesPage`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.
 **Motivo:** com persistência síncrona em `localStorage`, esse contador é suficiente para refazer as
 leituras após escrever, sem uma camada de cache mais complexa (ex.: React Query) nesta fase.
-
-## ADR-008 — Convites in-app (token + link, sem e-mail)
-**Decisão:** convites de equipe usam coluna `token` em `convites` e link copiável
-(`/empresas?convite=TOKEN`); aceite via RPC `accept_invite` / `accept_invite_by_token`.
-**Motivo:** envio de e-mail exige SMTP/Edge Function; o fluxo in-app cobre demo e equipes pequenas
-com banner global e modal de aceite.
-
-## ADR-009 — CRM integrado a clientes e vendas
-**Decisão:** `oportunidades` ganha FKs opcionais `cliente_id`, `vendedor_id`, `pedido_venda_id`;
-ação `gerarOrcamento` cria `pedido_venda` (orçamento) a partir da oportunidade.
-**Motivo:** eliminar texto livre isolado e fechar o funil comercial até o módulo de Vendas.

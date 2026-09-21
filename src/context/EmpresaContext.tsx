@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -33,6 +34,8 @@ const Ctx = createContext<EmpresaContextValue | null>(null);
 
 export function EmpresaProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  // Estável no TOKEN_REFRESHED — evita remount de formulários em RequireEmpresa.
+  const userId = user?.id ?? null;
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [loading, setLoading] = useState(true);
   const [ativaId, setAtivaId] = useState<string | null>(() =>
@@ -40,22 +43,26 @@ export function EmpresaProvider({ children }: { children: ReactNode }) {
   );
   const [version, setVersion] = useState(0);
   const [papeis, setPapeis] = useState<Record<string, Papel>>({});
+  const initialLoadDone = useRef(false);
 
   const refreshEmpresas = useCallback(async () => {
-    if (!user) {
+    if (!userId) {
       setEmpresas([]);
       setPapeis({});
       setLoading(false);
+      initialLoadDone.current = false;
       return;
     }
-    setLoading(true);
+    // Spinner só no boot; refresh em background (token / manual) não desmonta filhos.
+    if (!initialLoadDone.current) setLoading(true);
     try {
       const [lista, assoc] = await Promise.all([
         empresaService.list(),
-        membroService.minhasAssociacoes(user.id),
+        membroService.minhasAssociacoes(userId),
       ]);
       setEmpresas(lista);
       setPapeis(Object.fromEntries(assoc.map((a) => [a.empresaId, a.papel])));
+      initialLoadDone.current = true;
     } catch (e) {
       console.error("[empresa] falha ao carregar empresas:", e);
       setEmpresas([]);
@@ -63,7 +70,7 @@ export function EmpresaProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [userId]);
 
   const bumpData = useCallback(() => setVersion((v) => v + 1), []);
 
@@ -72,7 +79,7 @@ export function EmpresaProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACTIVE_KEY, id);
   }, []);
 
-  // Recarrega empresas quando o usuário muda (login/logout).
+  // Recarrega empresas quando o usuário muda (login/logout), não no refresh de token.
   useEffect(() => {
     refreshEmpresas();
   }, [refreshEmpresas]);
