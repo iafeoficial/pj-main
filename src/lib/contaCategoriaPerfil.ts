@@ -63,7 +63,8 @@ export function pessoaRequired(perfil: PerfilLancamento): boolean {
 }
 
 export function showVincularCadastro(perfil: PerfilLancamento): boolean {
-  return perfil === "fornecedor" || perfil === "cliente";
+  // Genérico (Favorecido/Pagador) também usa o dropdown unificado cliente+fornecedor.
+  return perfil === "fornecedor" || perfil === "cliente" || perfil === "generico";
 }
 
 export function hidePessoaField(perfil: PerfilLancamento): boolean {

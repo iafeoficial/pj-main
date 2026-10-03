@@ -162,17 +162,23 @@ export function ParceiroForm({
       )}
       <Field
         label={value.tipoPessoa === "pj" ? "CNPJ" : "CPF"}
-        hint="Opcional. Cadastro manual — consulta à Receita Federal em breve."
+        hint={
+          value.tipoPessoa === "pj"
+            ? "Opcional. CNPJ numérico ou alfanumérico (letras e números)."
+            : "Opcional. Cadastro manual — consulta à Receita Federal em breve."
+        }
         className="sm:col-span-2"
       >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <input
-            className="input flex-1"
-            inputMode="numeric"
+            className="input flex-1 uppercase"
+            inputMode={value.tipoPessoa === "pj" ? "text" : "numeric"}
+            autoCapitalize="characters"
             disabled={disabled}
             value={value.cnpjCpf}
             onChange={(e) => patch({ cnpjCpf: formatCpfCnpj(e.target.value) })}
             placeholder={value.tipoPessoa === "pj" ? "00.000.000/0000-00" : "000.000.000-00"}
+            maxLength={18}
           />
           <button
             type="button"

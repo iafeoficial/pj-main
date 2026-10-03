@@ -35,31 +35,57 @@ export function uid(): string {
   return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Máscara de CNPJ: 00.000.000/0000-00 */
-export function formatCNPJ(value: string): string {
-  const d = value.replace(/\D/g, "").slice(0, 14);
-  return d
-    .replace(/^(\d{2})(\d)/, "$1.$2")
-    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
-    .replace(/\.(\d{3})(\d)/, ".$1/$2")
-    .replace(/(\d{4})(\d)/, "$1-$2");
+/**
+ * Normaliza CNPJ (numérico ou alfanumérico): maiúsculas, só A–Z e 0–9.
+ * IN RFB 2.229/2024 — 12 primeiras posições alfanuméricas + 2 DVs numéricos.
+ */
+export function normalizeCNPJ(value: string): string {
+  return (value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 14);
 }
 
-/** Validação simples de CNPJ (dígitos verificadores). */
+/** Máscara de CNPJ: XX.XXX.XXX/XXXX-XX (aceita letras nas 12 primeiras posições). */
+export function formatCNPJ(value: string): string {
+  const c = normalizeCNPJ(value);
+  return c
+    .replace(/^([A-Z0-9]{2})([A-Z0-9])/, "$1.$2")
+    .replace(/^([A-Z0-9]{2})\.([A-Z0-9]{3})([A-Z0-9])/, "$1.$2.$3")
+    .replace(/\.([A-Z0-9]{3})([A-Z0-9])/, ".$1/$2")
+    .replace(/([A-Z0-9]{4})([A-Z0-9])/, "$1-$2");
+}
+
+const CNPJ_PESO1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+const CNPJ_PESO2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+
+function cnpjDigito(base: string, pesos: number[]): number {
+  let soma = 0;
+  for (let i = 0; i < base.length; i++) {
+    soma += (base.charCodeAt(i) - 48) * pesos[i];
+  }
+  const resto = soma % 11;
+  return resto < 2 ? 0 : 11 - resto;
+}
+
+/** Valida CNPJ numérico clássico e alfanumérico (módulo 11, ASCII−48). */
 export function isValidCNPJ(value: string): boolean {
+  const c = normalizeCNPJ(value);
+  if (!/^[A-Z0-9]{12}\d{2}$/.test(c)) return false;
+  if (/^0{12}/.test(c)) return false;
+  const d1 = cnpjDigito(c.slice(0, 12), CNPJ_PESO1);
+  const d2 = cnpjDigito(c.slice(0, 12) + String(d1), CNPJ_PESO2);
+  return c.slice(12) === `${d1}${d2}`;
+}
+
+/** Validação de CPF (11 dígitos + DVs). */
+export function isValidCPF(value: string): boolean {
   const c = value.replace(/\D/g, "");
-  if (c.length !== 14 || /^(\d)\1{13}$/.test(c)) return false;
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
   const calc = (len: number): number => {
     let sum = 0;
-    let pos = len - 7;
-    for (let i = len; i >= 1; i--) {
-      sum += Number(c[len - i]) * pos--;
-      if (pos < 2) pos = 9;
-    }
-    const r = sum % 11;
-    return r < 2 ? 0 : 11 - r;
+    for (let i = 0; i < len; i++) sum += Number(c[i]) * (len + 1 - i);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
   };
-  return calc(12) === Number(c[12]) && calc(13) === Number(c[13]);
+  return calc(9) === Number(c[9]) && calc(10) === Number(c[10]);
 }
 
 /** Primeiro e último dia (yyyy-MM-dd) do mês de uma data de referência. */

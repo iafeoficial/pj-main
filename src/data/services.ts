@@ -30,6 +30,7 @@ import {
   empresaTable,
   pagamentoContaTable,
 } from "./repos";
+import { reativarTransacoesPorTitulo } from "./transacaoVinculo";
 
 // ---------------------------------------------------------------------------
 // Empresas
@@ -275,6 +276,7 @@ type ContaPagarInput = Omit<
   | "parcelaTotal"
   | "grupoParcelamento"
   | "recorrencia"
+  | "recorrenciaDias"
   | "grupoRecorrencia"
 > & {
   valorPago?: number;
@@ -288,6 +290,7 @@ type ContaPagarInput = Omit<
   parcelaTotal?: number | null;
   grupoParcelamento?: string | null;
   recorrencia?: RecorrenciaTipo | null;
+  recorrenciaDias?: number | null;
   grupoRecorrencia?: string | null;
   /** Ao criar: gera N títulos mensais (parcelamento). Ignorado na edição. */
   parcelas?: number;
@@ -296,6 +299,11 @@ type ContaPagarInput = Omit<
 };
 
 function normalizePagarExtras(data: ContaPagarInput) {
+  const recorrencia = data.recorrencia ?? null;
+  const dias =
+    recorrencia === "personalizada"
+      ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
+      : null;
   return {
     desconto: data.desconto ?? 0,
     juros: data.juros ?? 0,
@@ -304,7 +312,8 @@ function normalizePagarExtras(data: ContaPagarInput) {
     parcelaNumero: data.parcelaNumero ?? null,
     parcelaTotal: data.parcelaTotal ?? null,
     grupoParcelamento: data.grupoParcelamento ?? null,
-    recorrencia: data.recorrencia ?? null,
+    recorrencia,
+    recorrenciaDias: dias,
     grupoRecorrencia: data.grupoRecorrencia ?? null,
   };
 }
@@ -365,6 +374,7 @@ export const contaPagarService = {
           dataVencimento: addMonthsIso(data.dataVencimento, i),
           dataCompetencia: addMonthsIso(data.dataCompetencia, i),
           recorrencia: null,
+          recorrenciaDias: null,
           grupoRecorrencia: null,
         });
         criadas.push(c);
@@ -380,30 +390,45 @@ export const contaPagarService = {
     }
 
     if (data.recorrencia && ocorrencias > 1) {
+      if (data.recorrencia === "personalizada") {
+        const dias = Math.floor(data.recorrenciaDias ?? 0);
+        if (!dias || dias < 1) {
+          throw new Error("Informe o intervalo em dias para a repetição personalizada.");
+        }
+      }
       const grupo = uid();
       const criadas: ContaPagar[] = [];
       let venc = data.dataVencimento;
       let comp = data.dataCompetencia;
+      const dias =
+        data.recorrencia === "personalizada"
+          ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
+          : null;
       for (let i = 0; i < ocorrencias; i++) {
         const c = await insertPagar(empresaId, data, {
           dataVencimento: venc,
           dataCompetencia: comp,
           recorrencia: data.recorrencia,
+          recorrenciaDias: dias,
           grupoRecorrencia: grupo,
           parcelaNumero: null,
           parcelaTotal: null,
           grupoParcelamento: null,
         });
         criadas.push(c);
-        venc = avancarRecorrencia(venc, data.recorrencia);
-        comp = avancarRecorrencia(comp, data.recorrencia);
+        venc = avancarRecorrencia(venc, data.recorrencia, dias);
+        comp = avancarRecorrencia(comp, data.recorrencia, dias);
       }
+      const rotulo =
+        data.recorrencia === "personalizada"
+          ? `a cada ${dias} dia(s)`
+          : data.recorrencia;
       await logAudit({
         empresaId,
         entidade: "ContaPagar",
         entidadeId: criadas[0].id,
         acao: "inclusao",
-        descricao: `Série recorrente (${ocorrencias}× ${data.recorrencia}) p/ "${data.fornecedor}" criada.`,
+        descricao: `Série recorrente (${ocorrencias}× ${rotulo}) p/ "${data.fornecedor}" criada.`,
       });
       return criadas[0];
     }
@@ -472,8 +497,15 @@ export const contaPagarService = {
     return c;
   },
   async remove(empresaId: string, id: string) {
+    await reativarTransacoesPorTitulo(empresaId, { contaPagarId: id });
     await contaPagarTable.remove(empresaId, id);
-    await logAudit({ empresaId, entidade: "ContaPagar", entidadeId: id, acao: "exclusao", descricao: "Conta a pagar excluída." });
+    await logAudit({
+      empresaId,
+      entidade: "ContaPagar",
+      entidadeId: id,
+      acao: "exclusao",
+      descricao: "Conta a pagar excluída.",
+    });
   },
 };
 
@@ -530,7 +562,14 @@ export const contaReceberService = {
     return c;
   },
   async remove(empresaId: string, id: string) {
+    await reativarTransacoesPorTitulo(empresaId, { contaReceberId: id });
     await contaReceberTable.remove(empresaId, id);
-    await logAudit({ empresaId, entidade: "ContaReceber", entidadeId: id, acao: "exclusao", descricao: "Conta a receber excluída." });
+    await logAudit({
+      empresaId,
+      entidade: "ContaReceber",
+      entidadeId: id,
+      acao: "exclusao",
+      descricao: "Conta a receber excluída.",
+    });
   },
 };

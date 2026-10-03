@@ -7,16 +7,21 @@ import type {
   CategoriaGrupo,
   CategoriaTipo,
   CentroCusto,
+  Cliente,
   ContaFinanceira,
+  Fornecedor,
   ImpostosRetidos,
   PagamentoConta,
   RecorrenciaTipo,
+  TipoPessoa,
 } from "@/types/domain";
 import { categoriaService, centroCustoService, contaFinanceiraService, categoriaGrupoService } from "@/data/services";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
-import { formatBRL, formatDate, today } from "@/lib/utils";
+import { formatBRL, formatDate, isValidCNPJ, isValidCPF, normalizeCNPJ, today } from "@/lib/utils";
+import { formatCpfCnpj } from "@/lib/masks";
+import { emptyParceiroForm, parceiroToPayload } from "@/features/cadastros/ParceiroForm";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -69,6 +74,7 @@ export interface ContaLike {
   parcelaNumero?: number | null;
   parcelaTotal?: number | null;
   recorrencia?: RecorrenciaTipo | null;
+  recorrenciaDias?: number | null;
   dataCompetencia: string;
   dataVencimento: string;
   dataBaixa: string | null;
@@ -81,7 +87,11 @@ export interface ContasConfig {
   subtitulo: string;
   icon: LucideIcon;
   pessoaLabel: string; // "Beneficiário" | "Cliente"
-  /** Carrega fornecedores ou clientes ativos para o select do modal. */
+  /**
+   * Quando definido, o modal carrega **clientes e fornecedores** no mesmo dropdown
+   * (a pessoa pode atuar nos dois papéis). O valor só indica o cadastro preferencial
+   * ao criar um novo parceiro a partir do lançamento.
+   */
   pessoaCadastro?: "fornecedor" | "cliente";
   categoriaTipo: CategoriaTipo; // despesa | receita
   /** Exibe o select de conta/cartão (Contas a Pagar). */
@@ -117,6 +127,8 @@ export interface ContaFormData {
   impostos: ImpostosRetidos | null;
   parcelas: number;
   recorrencia: RecorrenciaTipo | null;
+  /** Dias entre títulos quando recorrência = personalizada. */
+  recorrenciaDias: number;
   recorrenciaOcorrencias: number;
 }
 
@@ -138,6 +150,7 @@ const EMPTY_FORM = (): ContaFormData => ({
   impostos: null,
   parcelas: 1,
   recorrencia: null,
+  recorrenciaDias: 30,
   recorrenciaOcorrencias: 1,
 });
 
@@ -192,14 +205,70 @@ export function ContasModule({
   );
   const { data: compras } = useAsyncData(() => compraService.list(empresaId), [empresaId, version], []);
   const { data: vendas } = useAsyncData(() => vendaService.list(empresaId), [empresaId, version], []);
-  const { data: pessoasCadastro } = useAsyncData(
-    () => {
-      if (config.pessoaCadastro === "fornecedor") return fornecedorService.listAtivos(empresaId);
-      if (config.pessoaCadastro === "cliente") return clienteService.listAtivos(empresaId);
-      return Promise.resolve([]);
-    },
+  const { data: clientesAtivos } = useAsyncData(
+    () =>
+      config.pessoaCadastro
+        ? clienteService.listAtivos(empresaId)
+        : Promise.resolve([] as Cliente[]),
     [empresaId, version, config.pessoaCadastro],
-    [] as { id: string; nome: string }[]
+    [] as Cliente[]
+  );
+  const { data: fornecedoresAtivos } = useAsyncData(
+    () =>
+      config.pessoaCadastro
+        ? fornecedorService.listAtivos(empresaId)
+        : Promise.resolve([] as Fornecedor[]),
+    [empresaId, version, config.pessoaCadastro],
+    [] as Fornecedor[]
+  );
+
+  type ParceiroOpt = {
+    nome: string;
+    cnpjCpf: string;
+    tipoPessoa: TipoPessoa;
+    kinds: ("cliente" | "fornecedor")[];
+  };
+
+  const parceirosCadastro = useMemo(() => {
+    const map = new Map<string, ParceiroOpt>();
+    for (const c of clientesAtivos) {
+      map.set(c.nome, {
+        nome: c.nome,
+        cnpjCpf: c.cnpjCpf ?? "",
+        tipoPessoa: c.tipoPessoa ?? "pj",
+        kinds: ["cliente"],
+      });
+    }
+    for (const f of fornecedoresAtivos) {
+      const existing = map.get(f.nome);
+      if (existing) {
+        if (!existing.kinds.includes("fornecedor")) existing.kinds.push("fornecedor");
+        if (!existing.cnpjCpf && f.cnpjCpf) existing.cnpjCpf = f.cnpjCpf;
+      } else {
+        map.set(f.nome, {
+          nome: f.nome,
+          cnpjCpf: f.cnpjCpf ?? "",
+          tipoPessoa: f.tipoPessoa ?? "pj",
+          kinds: ["fornecedor"],
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [clientesAtivos, fornecedoresAtivos]);
+
+  const parceiroOptions = useMemo(
+    () =>
+      parceirosCadastro.map((p) => {
+        const kind =
+          p.kinds.includes("cliente") && p.kinds.includes("fornecedor")
+            ? "Cliente · Fornecedor"
+            : p.kinds[0] === "cliente"
+              ? "Cliente"
+              : "Fornecedor";
+        const doc = p.cnpjCpf ? ` — ${p.cnpjCpf}` : "";
+        return { value: p.nome, label: `${p.nome} (${kind})${doc}` };
+      }),
+    [parceirosCadastro]
   );
   const catMap = useMemo(
     () => new Map(todasCategorias.map((c) => [c.id, c.nome])),
@@ -235,6 +304,8 @@ export function ContasModule({
   const [form, setForm] = useState<ContaFormData>(EMPTY_FORM());
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [vincularCadastro, setVincularCadastro] = useState(false);
+  const [pessoaTipoPessoa, setPessoaTipoPessoa] = useState<TipoPessoa>("pj");
+  const [pessoaCnpjCpf, setPessoaCnpjCpf] = useState("");
   const [historico, setHistorico] = useState<PagamentoConta[]>([]);
 
   const [baixaConta, setBaixaConta] = useState<ContaLike | null>(null);
@@ -249,6 +320,8 @@ export function ContasModule({
     wizardStep: 1 | 2;
     vincularCadastro: boolean;
     formTab: FormTab;
+    pessoaTipoPessoa: TipoPessoa;
+    pessoaCnpjCpf: string;
   };
 
   const { clearDraft } = useFormDraft<ContaFormData, ContaDraftExtra>(
@@ -257,13 +330,15 @@ export function ContasModule({
       open: modalOpen,
       form,
       editingId,
-      extra: { wizardStep, vincularCadastro, formTab },
+      extra: { wizardStep, vincularCadastro, formTab, pessoaTipoPessoa, pessoaCnpjCpf },
     },
     (draft) => {
       setForm({ ...EMPTY_FORM(), ...draft.form });
       setEditingId(draft.editingId);
       setWizardStep(draft.extra?.wizardStep ?? 1);
       setVincularCadastro(draft.extra?.vincularCadastro ?? false);
+      setPessoaTipoPessoa(draft.extra?.pessoaTipoPessoa ?? "pj");
+      setPessoaCnpjCpf(draft.extra?.pessoaCnpjCpf ?? "");
       setFormTab(draft.extra?.formTab ?? "dados");
       setModalOpen(true);
       notify("Rascunho restaurado.", "info");
@@ -293,15 +368,36 @@ export function ContasModule({
 
   function resolveVincularCadastro(nome: string): boolean {
     if (!nome || !config.pessoaCadastro) return false;
-    return pessoasCadastro.some((p) => p.nome === nome);
+    return parceirosCadastro.some((p) => p.nome === nome);
   }
 
-  const vincularCadastroLabel =
-    config.pessoaCadastro === "fornecedor"
-      ? "Vincular a fornecedor cadastrado"
-      : config.pessoaCadastro === "cliente"
-        ? "Vincular a cliente cadastrado"
-        : "";
+  const vincularCadastroLabel = config.pessoaCadastro
+    ? "Selecionar cliente ou fornecedor cadastrado"
+    : "";
+
+  function applyParceiroSelecionado(nome: string) {
+    const p = parceirosCadastro.find((x) => x.nome === nome);
+    setForm((prev) => ({ ...prev, pessoa: nome }));
+    if (p) {
+      setPessoaTipoPessoa(p.tipoPessoa);
+      setPessoaCnpjCpf(p.cnpjCpf ? formatCpfCnpj(p.cnpjCpf) : "");
+    } else {
+      setPessoaCnpjCpf("");
+    }
+  }
+
+  function validatePessoaDocumento(): string | undefined {
+    const doc = pessoaCnpjCpf.trim();
+    if (!doc) return undefined;
+    if (pessoaTipoPessoa === "pj") {
+      if (normalizeCNPJ(doc).length < 14) return "CNPJ incompleto.";
+      if (!isValidCNPJ(doc)) return "CNPJ inválido.";
+    } else {
+      if (doc.replace(/\D/g, "").length < 11) return "CPF incompleto.";
+      if (!isValidCPF(doc)) return "CPF inválido.";
+    }
+    return undefined;
+  }
 
   const categoriaAtual = useMemo(
     () => categorias.find((c) => c.id === form.categoriaId) ?? null,
@@ -337,6 +433,8 @@ export function ContasModule({
     setForm(EMPTY_FORM());
     setErrors({});
     setVincularCadastro(false);
+    setPessoaTipoPessoa("pj");
+    setPessoaCnpjCpf("");
     setWizardStep(1);
     setFormTab("dados");
     setHistorico([]);
@@ -362,10 +460,15 @@ export function ContasModule({
       impostos: c.impostos ?? null,
       parcelas: 1,
       recorrencia: c.recorrencia ?? null,
+      recorrenciaDias: c.recorrenciaDias ?? 30,
       recorrenciaOcorrencias: 1,
     });
     setErrors({});
-    setVincularCadastro(resolveVincularCadastro(c.pessoa));
+    const linked = resolveVincularCadastro(c.pessoa);
+    setVincularCadastro(linked);
+    const p = parceirosCadastro.find((x) => x.nome === c.pessoa);
+    setPessoaTipoPessoa(p?.tipoPessoa ?? "pj");
+    setPessoaCnpjCpf(p?.cnpjCpf ? formatCpfCnpj(p.cnpjCpf) : "");
     setWizardStep(2);
     setFormTab("dados");
     setModalOpen(true);
@@ -379,6 +482,11 @@ export function ContasModule({
   }
 
   function continueToStep2() {
+    const docErr = validatePessoaDocumento();
+    if (docErr) {
+      setErrors({ cnpjCpf: docErr });
+      return;
+    }
     setErrors({});
     setWizardStep(2);
     setFormTab("dados");
@@ -422,8 +530,36 @@ export function ContasModule({
     if (!editingId && !form.categoriaId) err.categoriaId = "Escolha a categoria.";
     if (!form.valor || form.valor <= 0) err.valor = "Informe um valor maior que zero.";
     if (!form.dataVencimento) err.dataVencimento = "Informe o vencimento.";
+    if (
+      !editingId &&
+      form.recorrencia === "personalizada" &&
+      (!form.recorrenciaDias || form.recorrenciaDias < 1)
+    ) {
+      err.recorrenciaDias = "Informe o intervalo em dias (ex.: 12 ou 20).";
+    }
+    const docErr = validatePessoaDocumento();
+    if (docErr) err.cnpjCpf = docErr;
     setErrors(err);
+    if (err.recorrenciaDias) setFormTab("parcelas");
     return Object.keys(err).length === 0;
+  }
+
+  /** Se nome + documento novos, cria no cadastro preferencial (cliente ou fornecedor). */
+  async function ensureParceiroCadastro(nome: string) {
+    if (!config.pessoaCadastro || !nome.trim() || !pessoaCnpjCpf.trim()) return;
+    if (parceirosCadastro.some((p) => p.nome === nome.trim())) return;
+    const base = emptyParceiroForm();
+    const data = parceiroToPayload({
+      ...base,
+      tipoPessoa: pessoaTipoPessoa,
+      nome: nome.trim(),
+      cnpjCpf: pessoaCnpjCpf.trim(),
+    });
+    if (config.pessoaCadastro === "fornecedor") {
+      await fornecedorService.create(empresaId, data);
+    } else {
+      await clienteService.create(empresaId, data);
+    }
   }
 
   async function save() {
@@ -433,6 +569,9 @@ export function ContasModule({
       payload.pessoa = getDefaultPessoa(perfil, form);
     }
     try {
+      if (!editingId && payload.pessoa) {
+        await ensureParceiroCadastro(payload.pessoa);
+      }
       if (editingId) {
         await config.update(empresaId, editingId, payload);
         notify("Lançamento atualizado.");
@@ -700,56 +839,95 @@ export function ContasModule({
         }
       >
         {!editingId && wizardStep === 1 ? (
-          <Field
-            label={pessoaStepLabel}
-            hint="Comece pela pessoa do lançamento; a categoria e os valores vêm na próxima etapa."
-          >
-            {config.pessoaCadastro ? (
-              <div className="space-y-2">
-                {vincularCadastro ? (
-                  <Select
-                    value={form.pessoa}
-                    onChange={(v) => setForm({ ...form, pessoa: v })}
-                    options={[
-                      { value: "", label: "— selecione —" },
-                      ...pessoasCadastro.map((p) => ({ value: p.nome, label: p.nome })),
-                    ]}
-                  />
-                ) : (
-                  <input
-                    className="input"
-                    value={form.pessoa}
-                    onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
-                    placeholder={getPessoaPlaceholder("generico")}
-                    autoFocus
-                  />
-                )}
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border"
-                    checked={vincularCadastro}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setVincularCadastro(checked);
-                      if (checked && !pessoasCadastro.some((p) => p.nome === form.pessoa)) {
-                        setForm({ ...form, pessoa: "" });
-                      }
-                    }}
-                  />
-                  {vincularCadastroLabel}
-                </label>
-              </div>
-            ) : (
-              <input
-                className="input"
-                value={form.pessoa}
-                onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
-                placeholder={getPessoaPlaceholder("generico")}
-                autoFocus
-              />
-            )}
-          </Field>
+          <div className="space-y-4">
+            <Field
+              label={pessoaStepLabel}
+              hint="Comece pela pessoa do lançamento; a categoria e os valores vêm na próxima etapa."
+            >
+              {config.pessoaCadastro ? (
+                <div className="space-y-2">
+                  {vincularCadastro ? (
+                    <Select
+                      value={form.pessoa}
+                      onChange={applyParceiroSelecionado}
+                      options={[
+                        { value: "", label: "— selecione cliente ou fornecedor —" },
+                        ...parceiroOptions,
+                      ]}
+                    />
+                  ) : (
+                    <input
+                      className="input"
+                      value={form.pessoa}
+                      onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                      placeholder={getPessoaPlaceholder("generico")}
+                      autoFocus
+                    />
+                  )}
+                  <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border"
+                      checked={vincularCadastro}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setVincularCadastro(checked);
+                        if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
+                          setForm({ ...form, pessoa: "" });
+                          setPessoaCnpjCpf("");
+                        }
+                      }}
+                    />
+                    {vincularCadastroLabel}
+                  </label>
+                </div>
+              ) : (
+                <input
+                  className="input"
+                  value={form.pessoa}
+                  onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                  placeholder={getPessoaPlaceholder("generico")}
+                  autoFocus
+                />
+              )}
+            </Field>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Tipo">
+                <Select
+                  value={pessoaTipoPessoa}
+                  onChange={(v) => {
+                    setPessoaTipoPessoa(v as TipoPessoa);
+                    setPessoaCnpjCpf("");
+                  }}
+                  options={[
+                    { value: "pj", label: "Pessoa jurídica (CNPJ)" },
+                    { value: "pf", label: "Pessoa física (CPF)" },
+                  ]}
+                />
+              </Field>
+              <Field
+                label={pessoaTipoPessoa === "pj" ? "CNPJ" : "CPF"}
+                error={errors.cnpjCpf}
+                hint={
+                  pessoaTipoPessoa === "pj"
+                    ? "Opcional. Aceita CNPJ numérico ou alfanumérico (com letras)."
+                    : "Opcional."
+                }
+              >
+                <input
+                  className="input uppercase"
+                  inputMode={pessoaTipoPessoa === "pj" ? "text" : "numeric"}
+                  autoCapitalize="characters"
+                  maxLength={18}
+                  value={pessoaCnpjCpf}
+                  onChange={(e) => setPessoaCnpjCpf(formatCpfCnpj(e.target.value))}
+                  placeholder={
+                    pessoaTipoPessoa === "pj" ? "00.000.000/0000-00" : "000.000.000-00"
+                  }
+                />
+              </Field>
+            </div>
+          </div>
         ) : (
           <div className="space-y-4">
             {config.extrasPagar && (
@@ -809,56 +987,99 @@ export function ContasModule({
                   </div>
                 )}
                 {!hidePessoaField(perfil) && (
-                  <Field
-                    label={pessoaFieldLabel}
-                    required={pessoaRequired(perfil)}
-                    error={errors.pessoa}
-                    className="sm:col-span-2"
-                  >
-                    {showVincularCadastro(perfil) && config.pessoaCadastro ? (
-                      <div className="space-y-2">
-                        {vincularCadastro ? (
+                  <>
+                    <Field
+                      label={pessoaFieldLabel}
+                      required={pessoaRequired(perfil)}
+                      error={errors.pessoa}
+                      className="sm:col-span-2"
+                    >
+                      {showVincularCadastro(perfil) && config.pessoaCadastro ? (
+                        <div className="space-y-2">
+                          {vincularCadastro ? (
+                            <Select
+                              value={form.pessoa}
+                              onChange={applyParceiroSelecionado}
+                              options={[
+                                { value: "", label: "— selecione cliente ou fornecedor —" },
+                                ...parceiroOptions,
+                              ]}
+                            />
+                          ) : (
+                            <input
+                              className="input"
+                              value={form.pessoa}
+                              onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                              placeholder={getPessoaPlaceholder(perfil)}
+                            />
+                          )}
+                          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border"
+                              checked={vincularCadastro}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setVincularCadastro(checked);
+                                if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
+                                  setForm({ ...form, pessoa: "" });
+                                  setPessoaCnpjCpf("");
+                                }
+                              }}
+                            />
+                            {vincularCadastroLabel}
+                          </label>
+                        </div>
+                      ) : (
+                        <input
+                          className="input"
+                          value={form.pessoa}
+                          onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                          placeholder={getPessoaPlaceholder(perfil)}
+                        />
+                      )}
+                    </Field>
+                    {config.pessoaCadastro && showVincularCadastro(perfil) && (
+                      <>
+                        <Field label="Tipo">
                           <Select
-                            value={form.pessoa}
-                            onChange={(v) => setForm({ ...form, pessoa: v })}
+                            value={pessoaTipoPessoa}
+                            onChange={(v) => {
+                              setPessoaTipoPessoa(v as TipoPessoa);
+                              setPessoaCnpjCpf("");
+                            }}
                             options={[
-                              { value: "", label: "— selecione —" },
-                              ...pessoasCadastro.map((p) => ({ value: p.nome, label: p.nome })),
+                              { value: "pj", label: "Pessoa jurídica (CNPJ)" },
+                              { value: "pf", label: "Pessoa física (CPF)" },
                             ]}
                           />
-                        ) : (
+                        </Field>
+                        <Field
+                          label={pessoaTipoPessoa === "pj" ? "CNPJ" : "CPF"}
+                          error={errors.cnpjCpf}
+                          hint={
+                            pessoaTipoPessoa === "pj"
+                              ? "Opcional. Aceita CNPJ numérico ou alfanumérico."
+                              : "Opcional."
+                          }
+                        >
                           <input
-                            className="input"
-                            value={form.pessoa}
-                            onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
-                            placeholder={getPessoaPlaceholder(perfil)}
+                            className="input uppercase"
+                            inputMode={pessoaTipoPessoa === "pj" ? "text" : "numeric"}
+                            autoCapitalize="characters"
+                            maxLength={18}
+                            value={pessoaCnpjCpf}
+                            onChange={(e) => setPessoaCnpjCpf(formatCpfCnpj(e.target.value))}
+                            placeholder={
+                              pessoaTipoPessoa === "pj"
+                                ? "00.000.000/0000-00"
+                                : "000.000.000-00"
+                            }
                           />
-                        )}
-                        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                          <input
-                            type="checkbox"
-                            className="rounded border-border"
-                            checked={vincularCadastro}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setVincularCadastro(checked);
-                              if (checked && !pessoasCadastro.some((p) => p.nome === form.pessoa)) {
-                                setForm({ ...form, pessoa: "" });
-                              }
-                            }}
-                          />
-                          {vincularCadastroLabel}
-                        </label>
-                      </div>
-                    ) : (
-                      <input
-                        className="input"
-                        value={form.pessoa}
-                        onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
-                        placeholder={getPessoaPlaceholder(perfil)}
-                      />
+                        </Field>
+                      </>
                     )}
-                  </Field>
+                  </>
                 )}
                 <Field label="Valor (R$)" required error={errors.valor}>
                   <input
@@ -992,6 +1213,7 @@ export function ContasModule({
               <ParcelasRepeticaoFields
                 parcelas={form.parcelas}
                 recorrencia={form.recorrencia}
+                recorrenciaDias={form.recorrenciaDias}
                 recorrenciaOcorrencias={form.recorrenciaOcorrencias}
                 editing={!!editingId}
                 onChange={(partial) => setForm({ ...form, ...partial })}

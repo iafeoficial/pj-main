@@ -111,7 +111,8 @@ export type RecorrenciaTipo =
   | "quinzenal"
   | "mensal"
   | "semestral"
-  | "anual";
+  | "anual"
+  | "personalizada";
 
 export interface ContaPagar extends OwnedEntity {
   fornecedor: string;
@@ -130,6 +131,8 @@ export interface ContaPagar extends OwnedEntity {
   grupoParcelamento: string | null;
   // Repetição: títulos gerados em série compartilham `grupoRecorrencia`.
   recorrencia: RecorrenciaTipo | null;
+  /** Dias entre ocorrências quando `recorrencia === "personalizada"`. */
+  recorrenciaDias: number | null;
   grupoRecorrencia: string | null;
   dataCompetencia: string; // ISO date (yyyy-MM-dd)
   dataVencimento: string;

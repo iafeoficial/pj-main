@@ -301,9 +301,12 @@ export function EmpresasPage() {
               onChange={(e) => setForm({ ...form, razaoSocial: e.target.value })}
             />
           </Field>
-          <Field label="CNPJ" required error={errors.cnpj}>
+          <Field label="CNPJ" required error={errors.cnpj} hint="Numérico ou alfanumérico (letras e números).">
             <input
-              className="input"
+              className="input uppercase"
+              inputMode="text"
+              autoCapitalize="characters"
+              maxLength={18}
               value={formatCNPJ(form.cnpj)}
               onChange={(e) => setForm({ ...form, cnpj: e.target.value })}
               placeholder="00.000.000/0000-00"

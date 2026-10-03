@@ -21,8 +21,15 @@ export function valorDevido(c: Pick<ContaPagar, "valor" | "desconto" | "juros" |
   return Math.max(0, Number((bruto - desconto + juros - retidos).toFixed(2)));
 }
 
-/** Avança uma data ISO (yyyy-MM-dd) conforme o tipo de recorrência. */
-export function avancarRecorrencia(iso: string, tipo: RecorrenciaTipo): string {
+/**
+ * Avança uma data ISO (yyyy-MM-dd) conforme o tipo de recorrência.
+ * Para `personalizada`, usa `dias` (mín. 1).
+ */
+export function avancarRecorrencia(
+  iso: string,
+  tipo: RecorrenciaTipo,
+  dias?: number | null
+): string {
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   switch (tipo) {
@@ -40,6 +47,9 @@ export function avancarRecorrencia(iso: string, tipo: RecorrenciaTipo): string {
       break;
     case "anual":
       d.setFullYear(d.getFullYear() + 1);
+      break;
+    case "personalizada":
+      d.setDate(d.getDate() + Math.max(1, Math.min(365, Math.floor(dias ?? 1))));
       break;
   }
   return d.toISOString().slice(0, 10);
@@ -77,6 +87,7 @@ export const RECORRENCIA_OPTS: { value: RecorrenciaTipo; label: string }[] = [
   { value: "mensal", label: "Mensal" },
   { value: "semestral", label: "Semestral" },
   { value: "anual", label: "Anual" },
+  { value: "personalizada", label: "Período específico" },
 ];
 
 export const IMPOSTO_LABELS: Record<string, string> = {

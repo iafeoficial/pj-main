@@ -39,6 +39,7 @@ const config: ContasConfig = {
       parcelaNumero: c.parcelaNumero,
       parcelaTotal: c.parcelaTotal,
       recorrencia: c.recorrencia,
+      recorrenciaDias: c.recorrenciaDias,
       dataCompetencia: c.dataCompetencia,
       dataVencimento: c.dataVencimento,
       dataBaixa: c.dataPagamento,
@@ -62,6 +63,10 @@ const config: ContasConfig = {
       observacao: input.observacao,
       parcelas: input.parcelas,
       recorrencia: input.recorrencia ?? null,
+      recorrenciaDias:
+        input.recorrencia === "personalizada"
+          ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias || 30)))
+          : null,
       recorrenciaOcorrencias: input.recorrenciaOcorrencias,
     }),
   update: (empresaId, id, input) =>

@@ -79,17 +79,20 @@ export function ImpostosFields({
 export function ParcelasRepeticaoFields({
   parcelas,
   recorrencia,
+  recorrenciaDias,
   recorrenciaOcorrencias,
   editing,
   onChange,
 }: {
   parcelas: number;
   recorrencia: RecorrenciaTipo | null;
+  recorrenciaDias: number;
   recorrenciaOcorrencias: number;
   editing: boolean;
-  onChange: ( partial: {
+  onChange: (partial: {
     parcelas?: number;
     recorrencia?: RecorrenciaTipo | null;
+    recorrenciaDias?: number;
     recorrenciaOcorrencias?: number;
   }) => void;
 }) {
@@ -103,6 +106,7 @@ export function ParcelasRepeticaoFields({
 
   const temParcelas = parcelas > 1;
   const temRecorrencia = !!recorrencia;
+  const personalizada = recorrencia === "personalizada";
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -119,7 +123,10 @@ export function ParcelasRepeticaoFields({
           value={parcelas || 1}
           onChange={(e) => {
             const n = Math.max(1, Math.min(60, Math.floor(Number(e.target.value) || 1)));
-            onChange({ parcelas: n, ...(n > 1 ? { recorrencia: null } : {}) });
+            onChange({
+              parcelas: n,
+              ...(n > 1 ? { recorrencia: null, recorrenciaDias: 30 } : {}),
+            });
           }}
         />
       </Field>
@@ -129,12 +136,16 @@ export function ParcelasRepeticaoFields({
       >
         <Select
           value={recorrencia ?? ""}
-          onChange={(v) =>
+          onChange={(v) => {
+            const next = (v || null) as RecorrenciaTipo | null;
             onChange({
-              recorrencia: (v || null) as RecorrenciaTipo | null,
+              recorrencia: next,
               ...(v ? { parcelas: 1 } : {}),
-            })
-          }
+              ...(next === "personalizada" ? { recorrenciaDias: recorrenciaDias || 30 } : {}),
+              ...(next && next !== "personalizada" ? { recorrenciaDias: 30 } : {}),
+              ...(!next ? { recorrenciaDias: 30 } : {}),
+            });
+          }}
           options={[
             { value: "", label: "— sem repetição —" },
             ...RECORRENCIA_OPTS.map((o) => ({ value: o.value, label: o.label })),
@@ -142,6 +153,32 @@ export function ParcelasRepeticaoFields({
           disabled={temParcelas}
         />
       </Field>
+      {personalizada && (
+        <Field
+          label="A cada (dias)"
+          hint="Ex.: 12, 20, 45 — intervalo entre cada título."
+          required
+        >
+          <div className="flex items-center gap-2">
+            <input
+              className="input"
+              type="number"
+              min="1"
+              max="365"
+              value={recorrenciaDias || 30}
+              onChange={(e) =>
+                onChange({
+                  recorrenciaDias: Math.max(
+                    1,
+                    Math.min(365, Math.floor(Number(e.target.value) || 1))
+                  ),
+                })
+              }
+            />
+            <span className="shrink-0 text-sm text-muted-foreground">dias</span>
+          </div>
+        </Field>
+      )}
       {temRecorrencia && (
         <Field label="Ocorrências" hint="Inclui o lançamento atual.">
           <input

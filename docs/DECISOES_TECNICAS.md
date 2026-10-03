@@ -144,6 +144,39 @@ só tinha bandeira/dia da fatura e o cartão ficava pouco distinto na lista.
 helper `src/lib/contaFinanceira.ts`; formulário com seção dedicada de cartão em
 `ContasCartoesPage`.
 
+## ADR-020 — OFX pode originar Conta a Pagar/Receber
+**Decisão:** além de conciliar com título existente, a Conciliação permite **Lançar**
+uma linha do extrato como novo título: débito → Contas a Pagar, crédito → Contas a
+Receber, **já baixado** na data do banco. Exclusão do título (UI ou banco) reabre a
+transação OFX como `pendente` (service `reativarTransacoesPorTitulo` + triggers
+`BEFORE DELETE` em `contas_pagar` / `contas_receber`).
+**Motivo:** o extrato sozinho não gerava lançamento; sem título prévio a fila ficava
+presa em Pendente. Apagar o título por engano não pode “sumir” com o movimento do OFX.
+**Implementação:** `conciliacaoService.lancarDeTransacao` / `lancarPendentes`;
+`src/data/transacaoVinculo.ts`; migration `0021_reativar_transacao_ao_apagar_titulo.sql`;
+UI em `ConciliacaoPage`.
+
+## ADR-019 — Repetição com período específico (N dias)
+**Decisão:** valor `personalizada` no enum `recorrencia_tipo` + coluna
+`contas_pagar.recorrencia_dias` (1–365). Na UI, opção “Período específico” com
+campo “A cada (dias)”. `avancarRecorrencia` soma esses dias entre ocorrências.
+**Motivo:** além de semanal/mensal etc., o usuário precisa de intervalos livres
+(ex.: 12 ou 20 dias).
+**Implementação:** migration `0020_recorrencia_personalizada.sql`; tipo em
+`domain.ts`; `ParcelasRepeticaoFields`; `contaPagarService.create`.
+
+## ADR-018 — Favorecido unificado + CNPJ alfanumérico
+**Decisão:** no lançamento (Contas a Pagar/Receber), o dropdown de vínculo lista
+**clientes e fornecedores juntos** (rótulo Cliente / Fornecedor / ambos). CPF/CNPJ
+opcional no passo do favorecido; se nome+documento forem novos, cria cadastro no
+tipo preferencial do módulo (`pessoaCadastro`). CNPJ aceita formato **alfanumérico**
+(IN RFB 2.229/2024): 12 chars A–Z/0–9 + 2 DVs numéricos; validação módulo 11 com
+valor ASCII−48 (`formatCNPJ` / `isValidCNPJ` em `lib/utils.ts`).
+**Motivo:** a mesma pessoa pode ser cliente e fornecedor; o CNPJ novo da Receita
+já emite letras e a máscara só-dígitos quebrava o cadastro.
+**Implementação:** `ContasModule` (lista unificada + campos PF/PJ); `masks.formatCpfCnpj`;
+`ParceiroForm` / `EmpresasPage` com `inputMode=text` e uppercase.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

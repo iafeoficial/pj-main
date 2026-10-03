@@ -322,9 +322,13 @@ export function SimpleCrud({ config, empresaId }: { config: SimpleCrudConfig; em
                   className={fd.fullWidth ? "sm:col-span-2" : undefined}
                 >
                   <input
-                    className="input"
+                    className={fd.type === "cpfCnpj" ? "input uppercase" : "input"}
                     type={fd.type === "number" ? "number" : fd.type === "email" ? "email" : "text"}
-                    inputMode={fd.type === "cpfCnpj" || fd.type === "telefone" ? "numeric" : undefined}
+                    inputMode={
+                      fd.type === "telefone" ? "numeric" : fd.type === "cpfCnpj" ? "text" : undefined
+                    }
+                    autoCapitalize={fd.type === "cpfCnpj" ? "characters" : undefined}
+                    maxLength={fd.type === "cpfCnpj" ? 18 : undefined}
                     step={fd.type === "number" ? "0.01" : undefined}
                     placeholder={fd.type === "telefone" ? TELEFONE_PLACEHOLDER : undefined}
                     value={String(form[fd.key] ?? "")}

@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import { Landmark, Upload, CheckCircle2, Ban, RotateCcw } from "lucide-react";
-import type { ExtratoBancario, RegraConciliacao, TransacaoBancaria } from "@/types/domain";
+import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle } from "lucide-react";
+import type { Categoria, ExtratoBancario, RegraConciliacao, TransacaoBancaria } from "@/types/domain";
 import {
   conciliacaoService,
   categoriaSugerida,
@@ -17,6 +17,8 @@ import { canWrite } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
+import { Field } from "@/components/ui/Field";
+import { Select } from "@/components/ui/Select";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -56,7 +58,7 @@ function Inner({ empresaId }: { empresaId: string }) {
   const { data: categorias } = useAsyncData(
     () => categoriaService.list(empresaId),
     [empresaId, version],
-    []
+    [] as Categoria[]
   );
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
 
@@ -65,6 +67,16 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [alvo, setAlvo] = useState<TransacaoBancaria | null>(null);
   const [sugestoes, setSugestoes] = useState<Sugestao[]>([]);
   const [categoriaIdSugerida, setCategoriaIdSugerida] = useState<string | null>(null);
+
+  const [lancarAlvo, setLancarAlvo] = useState<TransacaoBancaria | null>(null);
+  const [lancarPessoa, setLancarPessoa] = useState("");
+  const [lancarCategoriaId, setLancarCategoriaId] = useState("");
+  const [lancarErro, setLancarErro] = useState("");
+  const [lancando, setLancando] = useState(false);
+
+  const [loteOpen, setLoteOpen] = useState(false);
+  const [loteCategoriaId, setLoteCategoriaId] = useState("");
+  const [loteErro, setLoteErro] = useState("");
 
   const extratoResumo = useMemo(() => {
     const counts = new Map<string, number>();
@@ -78,6 +90,17 @@ function Inner({ empresaId }: { empresaId: string }) {
     () => (filtro === "todas" ? transacoes : transacoes.filter((t) => t.statusConciliacao === filtro)),
     [transacoes, filtro]
   );
+
+  const pendentes = useMemo(
+    () => transacoes.filter((t) => t.statusConciliacao === "pendente"),
+    [transacoes]
+  );
+
+  const categoriasLancar = useMemo(() => {
+    if (!lancarAlvo) return [] as Categoria[];
+    const tipo = lancarAlvo.tipo === "debito" ? "despesa" : "receita";
+    return categorias.filter((c) => c.ativo && c.tipo === tipo);
+  }, [categorias, lancarAlvo]);
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -112,6 +135,93 @@ function Inner({ empresaId }: { empresaId: string }) {
       setSugestoes(await sugerirConciliacao(empresaId, t));
     } catch (e) {
       notify((e as Error).message, "error");
+    }
+  }
+
+  function abrirLancar(t: TransacaoBancaria) {
+    const catId = categoriaSugerida(regras, t.tipo, t.descricao) ?? "";
+    setLancarAlvo(t);
+    setLancarPessoa(t.descricao || "");
+    setLancarCategoriaId(catId);
+    setLancarErro("");
+  }
+
+  async function confirmarLancar() {
+    if (!lancarAlvo) return;
+    if (!lancarPessoa.trim()) {
+      setLancarErro("Informe o nome da pessoa.");
+      return;
+    }
+    if (!lancarCategoriaId) {
+      setLancarErro("Escolha a categoria.");
+      return;
+    }
+    setLancando(true);
+    try {
+      const res = await conciliacaoService.lancarDeTransacao(empresaId, lancarAlvo.id, {
+        pessoa: lancarPessoa.trim(),
+        categoriaId: lancarCategoriaId,
+      });
+      bumpData();
+      notify(
+        res.tipo === "pagar"
+          ? "Conta a pagar criada e baixada a partir do extrato."
+          : "Conta a receber criada e baixada a partir do extrato."
+      );
+      setLancarAlvo(null);
+    } catch (e) {
+      setLancarErro((e as Error).message);
+      notify((e as Error).message, "error");
+    } finally {
+      setLancando(false);
+    }
+  }
+
+  async function confirmarLote() {
+    if (pendentes.length === 0) {
+      setLoteOpen(false);
+      return;
+    }
+    setLoteErro("");
+    setLancando(true);
+    try {
+      const res = await conciliacaoService.lancarPendentes(
+        empresaId,
+        pendentes.map((t) => t.id),
+        (t) => {
+          const sugerida = categoriaSugerida(regras, t.tipo, t.descricao);
+          const categoriaId = sugerida || loteCategoriaId;
+          if (!categoriaId) return null;
+          // Categoria do lote só vale se o tipo bater (despesa/receita).
+          if (!sugerida && loteCategoriaId) {
+            const cat = categorias.find((c) => c.id === loteCategoriaId);
+            const esperado = t.tipo === "debito" ? "despesa" : "receita";
+            if (!cat || cat.tipo !== esperado) return null;
+          }
+          return {
+            pessoa: t.descricao || "Extrato bancário",
+            categoriaId,
+          };
+        }
+      );
+      bumpData();
+      const msg = [
+        res.ok ? `${res.ok} lançada(s)` : null,
+        res.puladas ? `${res.puladas} pulada(s) (sem categoria)` : null,
+        res.erros.length ? `${res.erros.length} erro(s)` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      notify(msg || "Nenhuma transação lançada.", res.ok ? "success" : "info");
+      if (res.erros.length) {
+        notify(res.erros.slice(0, 3).join(" | "), "error");
+      }
+      setLoteOpen(false);
+    } catch (e) {
+      setLoteErro((e as Error).message);
+      notify((e as Error).message, "error");
+    } finally {
+      setLancando(false);
     }
   }
 
@@ -157,7 +267,7 @@ function Inner({ empresaId }: { empresaId: string }) {
     <>
       <PageHeader
         title="Conciliação Bancária"
-        subtitle="Importe o extrato (OFX) e concilie as transações com seus títulos — sempre com confirmação manual."
+        subtitle="Importe o extrato (OFX), concilie com títulos existentes ou lance novos em Contas a Pagar/Receber."
         actions={
           !readOnly ? (
             <>
@@ -168,6 +278,18 @@ function Inner({ empresaId }: { empresaId: string }) {
                 className="hidden"
                 onChange={onFile}
               />
+              {pendentes.length > 0 && (
+                <button
+                  className="btn-outline"
+                  onClick={() => {
+                    setLoteCategoriaId("");
+                    setLoteErro("");
+                    setLoteOpen(true);
+                  }}
+                >
+                  <PlusCircle className="h-4 w-4" /> Lançar pendentes ({pendentes.length})
+                </button>
+              )}
               <button className="btn-primary" onClick={() => fileRef.current?.click()}>
                 <Upload className="h-4 w-4" /> Importar OFX
               </button>
@@ -283,9 +405,20 @@ function Inner({ empresaId }: { empresaId: string }) {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex justify-end gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       {!readOnly && t.statusConciliacao === "pendente" && (
                         <>
+                          <button
+                            className="btn-primary btn-sm"
+                            onClick={() => abrirLancar(t)}
+                            title={
+                              t.tipo === "debito"
+                                ? "Criar conta a pagar baixada"
+                                : "Criar conta a receber baixada"
+                            }
+                          >
+                            <PlusCircle className="h-3.5 w-3.5" /> Lançar
+                          </button>
                           <button
                             className="btn-outline btn-sm"
                             onClick={() => abrirConciliacao(t)}
@@ -338,10 +471,10 @@ function Inner({ empresaId }: { empresaId: string }) {
             </div>
 
             {categoriaIdSugerida && (
-              <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:border-blue-500/30 dark:bg-blue-950/40 dark:text-blue-200">
                 Categoria sugerida:{" "}
                 <strong>{catMap.get(categoriaIdSugerida) ?? "—"}</strong>
-                <span className="ml-1 text-xs text-blue-600">(via regra de conciliação)</span>
+                <span className="ml-1 text-xs opacity-80">(via regra de conciliação)</span>
               </div>
             )}
 
@@ -350,9 +483,21 @@ function Inner({ empresaId }: { empresaId: string }) {
                 Sugestões ({alvo.tipo === "credito" ? "contas a receber" : "contas a pagar"})
               </p>
               {sugestoes.length === 0 ? (
-                <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                  Nenhum título compatível encontrado. Verifique os lançamentos em aberto.
-                </p>
+                <div className="space-y-3">
+                  <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                    Nenhum título compatível encontrado. Use <strong>Lançar</strong> para criar um
+                    novo em Contas a {alvo.tipo === "credito" ? "Receber" : "Pagar"}.
+                  </p>
+                  <button
+                    className="btn-primary w-full"
+                    onClick={() => {
+                      setAlvo(null);
+                      abrirLancar(alvo);
+                    }}
+                  >
+                    <PlusCircle className="h-4 w-4" /> Lançar novo título
+                  </button>
+                </div>
               ) : (
                 <ul className="space-y-2">
                   {sugestoes.map((s) => (
@@ -363,7 +508,8 @@ function Inner({ empresaId }: { empresaId: string }) {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{s.pessoa}</p>
                         <p className="text-xs text-muted-foreground">
-                          Venc. {formatDate(s.dataVencimento)} · saldo {formatBRL(s.saldo)} · {s.motivo}
+                          Venc. {formatDate(s.dataVencimento)} · saldo {formatBRL(s.saldo)} ·{" "}
+                          {s.motivo}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -382,6 +528,115 @@ function Inner({ empresaId }: { empresaId: string }) {
             </p>
           </div>
         )}
+      </Modal>
+
+      <Modal
+        open={!!lancarAlvo}
+        title={
+          lancarAlvo?.tipo === "credito"
+            ? "Lançar em Contas a Receber"
+            : "Lançar em Contas a Pagar"
+        }
+        onClose={() => !lancando && setLancarAlvo(null)}
+        width="max-w-lg"
+        footer={
+          <>
+            <button className="btn-outline" disabled={lancando} onClick={() => setLancarAlvo(null)}>
+              Cancelar
+            </button>
+            <button className="btn-primary" disabled={lancando} onClick={confirmarLancar}>
+              {lancando ? "Salvando…" : "Confirmar lançamento"}
+            </button>
+          </>
+        }
+      >
+        {lancarAlvo && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">{formatDate(lancarAlvo.data)}</span>
+                <span
+                  className={lancarAlvo.tipo === "credito" ? "text-emerald-600" : "text-red-600"}
+                >
+                  {formatBRL(lancarAlvo.valor)}
+                </span>
+              </div>
+              <div className="font-medium">{lancarAlvo.descricao || "—"}</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                O título será criado já{" "}
+                {lancarAlvo.tipo === "credito" ? "recebido" : "pago"} na data do banco.
+              </p>
+            </div>
+            <Field
+              label={lancarAlvo.tipo === "credito" ? "Pagador / cliente" : "Favorecido / fornecedor"}
+              required
+            >
+              <input
+                className="input"
+                value={lancarPessoa}
+                onChange={(e) => setLancarPessoa(e.target.value)}
+                autoFocus
+              />
+            </Field>
+            <Field label="Categoria" required error={lancarErro || undefined}>
+              <Select
+                value={lancarCategoriaId}
+                onChange={setLancarCategoriaId}
+                options={[
+                  { value: "", label: "— selecione —" },
+                  ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
+                ]}
+              />
+            </Field>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={loteOpen}
+        title="Lançar pendentes do extrato"
+        onClose={() => !lancando && setLoteOpen(false)}
+        width="max-w-lg"
+        footer={
+          <>
+            <button className="btn-outline" disabled={lancando} onClick={() => setLoteOpen(false)}>
+              Cancelar
+            </button>
+            <button className="btn-primary" disabled={lancando} onClick={confirmarLote}>
+              {lancando ? "Lançando…" : `Lançar até ${pendentes.length}`}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Cada pendente vira Conta a Pagar (débito) ou Conta a Receber (crédito), já baixada.
+            Linhas com regra de conciliação usam a categoria sugerida; as demais usam a categoria
+            abaixo (quando o tipo bater).
+          </p>
+          <Field
+            label="Categoria padrão (opcional)"
+            hint="Usada só quando não houver regra. Escolha uma de despesa ou de receita — só as linhas do mesmo tipo serão lançadas com ela."
+            error={loteErro || undefined}
+          >
+            <Select
+              value={loteCategoriaId}
+              onChange={setLoteCategoriaId}
+              options={[
+                { value: "", label: "— só usar categorias das regras —" },
+                ...categorias
+                  .filter((c) => c.ativo)
+                  .map((c) => ({
+                    value: c.id,
+                    label: `${c.nome} (${c.tipo === "despesa" ? "despesa" : "receita"})`,
+                  })),
+              ]}
+            />
+          </Field>
+          <p className="text-xs text-muted-foreground">
+            Pendentes sem categoria sugerida e sem categoria padrão compatível serão puladas.
+          </p>
+        </div>
       </Modal>
     </>
   );

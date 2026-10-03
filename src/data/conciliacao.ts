@@ -11,6 +11,7 @@ import type { OfxResultado } from "@/lib/ofx";
 import { logAudit } from "./audit";
 import { extratoTable, regraTable, transacaoTable } from "./repos";
 import { contaPagarService, contaReceberService } from "./services";
+import { reativarTransacoesPorTitulo } from "./transacaoVinculo";
 
 export interface ImportResumo {
   extratoId: string;
@@ -116,6 +117,139 @@ export const conciliacaoService = {
     }
 
     await logAudit({ empresaId, entidade: "TransacaoBancaria", entidadeId: transacaoId, acao: "baixa", descricao: "Transação conciliada e baixa registrada." });
+  },
+
+  /**
+   * Cria Conta a Pagar (débito) ou Conta a Receber (crédito) a partir da linha do extrato,
+   * já baixada na data do banco, e marca a transação como conciliada.
+   */
+  async lancarDeTransacao(
+    empresaId: string,
+    transacaoId: string,
+    input: { pessoa: string; categoriaId: string }
+  ) {
+    const t = await transacaoTable.find(empresaId, transacaoId);
+    if (!t) throw new Error("Transação não encontrada.");
+    if (t.statusConciliacao !== "pendente") {
+      throw new Error("Só é possível lançar transações pendentes.");
+    }
+    const pessoa = input.pessoa.trim();
+    if (!pessoa) throw new Error("Informe o nome da pessoa (favorecido/pagador).");
+    if (!input.categoriaId) throw new Error("Escolha a categoria.");
+
+    const valor = Math.abs(t.valor);
+    const obs = t.documento
+      ? `Origem extrato OFX · Doc: ${t.documento}`
+      : "Origem extrato OFX";
+
+    if (t.tipo === "debito") {
+      const conta = await contaPagarService.create(empresaId, {
+        fornecedor: pessoa,
+        categoriaId: input.categoriaId,
+        centroCustoId: null,
+        contaFinanceiraId: null,
+        valor,
+        dataCompetencia: t.data,
+        dataVencimento: t.data,
+        status: "aberta",
+        observacao: obs,
+      });
+      await contaPagarService.registrarPagamento(empresaId, conta.id, valor, t.data);
+      await transacaoTable.update(empresaId, transacaoId, {
+        statusConciliacao: "conciliada",
+        contaPagarId: conta.id,
+        contaReceberId: null,
+      });
+      await logAudit({
+        empresaId,
+        entidade: "TransacaoBancaria",
+        entidadeId: transacaoId,
+        acao: "inclusao",
+        descricao: `Conta a pagar criada e baixada a partir do extrato (${pessoa}).`,
+      });
+      return { tipo: "pagar" as const, contaId: conta.id };
+    }
+
+    const conta = await contaReceberService.create(empresaId, {
+      cliente: pessoa,
+      categoriaId: input.categoriaId,
+      centroCustoId: null,
+      valor,
+      dataCompetencia: t.data,
+      dataVencimento: t.data,
+      status: "aberta",
+      observacao: obs,
+    });
+    await contaReceberService.registrarRecebimento(empresaId, conta.id, valor, t.data);
+    await transacaoTable.update(empresaId, transacaoId, {
+      statusConciliacao: "conciliada",
+      contaReceberId: conta.id,
+      contaPagarId: null,
+    });
+    await logAudit({
+      empresaId,
+      entidade: "TransacaoBancaria",
+      entidadeId: transacaoId,
+      acao: "inclusao",
+      descricao: `Conta a receber criada e baixada a partir do extrato (${pessoa}).`,
+    });
+    return { tipo: "receber" as const, contaId: conta.id };
+  },
+
+  /**
+   * Lança várias pendentes. `resolver` devolve pessoa + categoria por transação
+   * (ou null para pular). Retorna contagens de sucesso / puladas / erros.
+   */
+  async lancarPendentes(
+    empresaId: string,
+    ids: string[],
+    resolver: (
+      t: TransacaoBancaria
+    ) => { pessoa: string; categoriaId: string } | null | Promise<{ pessoa: string; categoriaId: string } | null>
+  ): Promise<{ ok: number; puladas: number; erros: string[] }> {
+    let ok = 0;
+    let puladas = 0;
+    const erros: string[] = [];
+    for (const id of ids) {
+      const t = await transacaoTable.find(empresaId, id);
+      if (!t || t.statusConciliacao !== "pendente") {
+        puladas++;
+        continue;
+      }
+      const input = await resolver(t);
+      if (!input?.categoriaId) {
+        puladas++;
+        continue;
+      }
+      try {
+        await conciliacaoService.lancarDeTransacao(empresaId, id, {
+          pessoa: input.pessoa || t.descricao || "Extrato bancário",
+          categoriaId: input.categoriaId,
+        });
+        ok++;
+      } catch (e) {
+        erros.push(`${t.descricao || id}: ${(e as Error).message}`);
+      }
+    }
+    return { ok, puladas, erros };
+  },
+
+  /** Reabre linhas do extrato quando o título CP/CR vinculado é excluído. */
+  async reativarPorTitulo(
+    empresaId: string,
+    alvo: { contaPagarId?: string; contaReceberId?: string }
+  ) {
+    const n = await reativarTransacoesPorTitulo(empresaId, alvo);
+    if (n > 0) {
+      await logAudit({
+        empresaId,
+        entidade: "TransacaoBancaria",
+        entidadeId: alvo.contaPagarId ?? alvo.contaReceberId ?? "",
+        acao: "alteracao",
+        descricao: `${n} transação(ões) do extrato voltaram a pendente após exclusão do título.`,
+      });
+    }
+    return n;
   },
 
   setStatus(empresaId: string, id: string, status: ConciliacaoStatus) {

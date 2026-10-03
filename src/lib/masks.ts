@@ -1,4 +1,4 @@
-import { formatCNPJ } from "@/lib/utils";
+import { formatCNPJ, normalizeCNPJ } from "@/lib/utils";
 
 /** Remove tudo que não for dígito. */
 export function stripDigits(value: string): string {
@@ -14,11 +14,18 @@ export function formatCPF(value: string): string {
     .replace(/\.(\d{3})(\d)/, ".$1-$2");
 }
 
-/** CPF (até 11 dígitos) ou CNPJ (12–14 dígitos). */
+/**
+ * CPF (só dígitos, até 11) ou CNPJ (numérico/alfanumérico, 12–14 chars).
+ * Letras forçam máscara de CNPJ (IN RFB 2.229/2024).
+ */
 export function formatCpfCnpj(value: string): string {
-  const d = stripDigits(value);
-  if (d.length <= 11) return formatCPF(value);
-  return formatCNPJ(value);
+  const hasLetter = /[A-Za-z]/.test(value);
+  const alnum = normalizeCNPJ(value);
+  const digits = stripDigits(value);
+  if (hasLetter || alnum.length > 11 || digits.length > 11) {
+    return formatCNPJ(value);
+  }
+  return formatCPF(value);
 }
 
 /** Máscara de CEP: 00000-000 */

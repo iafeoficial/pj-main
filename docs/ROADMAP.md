@@ -17,7 +17,9 @@ Conforme `PROJETO_FINANCEIRO_PJ_MASTER.md`.
 - [x] Importação OFX (parser próprio, dedupe por FITID)
 - [x] Motor de sugestões (valor, data, histórico, documento)
 - [x] Sugestões + confirmação manual (com baixa do título)
-- [x] Regras de categorização **aplicadas na UI** (badge categoria sugerida)
+- [x] **Lançar** a partir do extrato → Conta a Pagar (débito) / Receber (crédito), já baixada
+- [x] Excluir título vinculado reabre a linha OFX como pendente
+- [x] Regras de categorização **aplicadas na UI** (badge categoria sugerida) + pré-seleção no Lançar
 - [x] Histórico de extratos importados na Conciliação
 - [x] **Backend Supabase** (Postgres + Auth + RLS por membership)
 
