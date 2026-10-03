@@ -29,6 +29,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { Select } from "@/components/ui/Select";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -544,18 +545,48 @@ export function ContasModule({
     return Object.keys(err).length === 0;
   }
 
-  /** Se nome + documento novos, cria no cadastro preferencial (cliente ou fornecedor). */
+  /**
+   * Garante cadastro do favorecido/pagador:
+   * - Contas a Pagar → fornecedor; Contas a Receber → cliente.
+   * - Cria mesmo sem CPF/CNPJ (só com o nome).
+   * - Se o cadastro já existe sem documento e o usuário preenche depois, atualiza.
+   */
   async function ensureParceiroCadastro(nome: string) {
-    if (!config.pessoaCadastro || !nome.trim() || !pessoaCnpjCpf.trim()) return;
-    if (parceirosCadastro.some((p) => p.nome === nome.trim())) return;
-    const base = emptyParceiroForm();
+    if (!config.pessoaCadastro || !nome.trim()) return;
+    const nomeTrim = nome.trim();
+    const doc = pessoaCnpjCpf.trim();
+    const preferFornecedor = config.pessoaCadastro === "fornecedor";
+
+    const existingForn = fornecedoresAtivos.find((f) => f.nome === nomeTrim);
+    const existingCli = clientesAtivos.find((c) => c.nome === nomeTrim);
+    const existing = preferFornecedor
+      ? (existingForn ?? existingCli)
+      : (existingCli ?? existingForn);
+    const existingKind: "fornecedor" | "cliente" | null = existingForn && existing?.id === existingForn.id
+      ? "fornecedor"
+      : existingCli && existing?.id === existingCli.id
+        ? "cliente"
+        : null;
+
+    if (existing && existingKind) {
+      if (doc && !(existing.cnpjCpf ?? "").trim()) {
+        const patch = { cnpjCpf: doc, tipoPessoa: pessoaTipoPessoa };
+        if (existingKind === "fornecedor") {
+          await fornecedorService.update(empresaId, existing.id, patch);
+        } else {
+          await clienteService.update(empresaId, existing.id, patch);
+        }
+      }
+      return;
+    }
+
     const data = parceiroToPayload({
-      ...base,
+      ...emptyParceiroForm(),
       tipoPessoa: pessoaTipoPessoa,
-      nome: nome.trim(),
-      cnpjCpf: pessoaCnpjCpf.trim(),
+      nome: nomeTrim,
+      cnpjCpf: doc,
     });
-    if (config.pessoaCadastro === "fornecedor") {
+    if (preferFornecedor) {
       await fornecedorService.create(empresaId, data);
     } else {
       await clienteService.create(empresaId, data);
@@ -569,7 +600,7 @@ export function ContasModule({
       payload.pessoa = getDefaultPessoa(perfil, form);
     }
     try {
-      if (!editingId && payload.pessoa) {
+      if (payload.pessoa) {
         await ensureParceiroCadastro(payload.pessoa);
       }
       if (editingId) {
@@ -847,9 +878,11 @@ export function ContasModule({
               {config.pessoaCadastro ? (
                 <div className="space-y-2">
                   {vincularCadastro ? (
-                    <Select
+                    <SearchableSelect
                       value={form.pessoa}
                       onChange={applyParceiroSelecionado}
+                      placeholder="Buscar cliente ou fornecedor…"
+                      searchPlaceholder="Digite nome ou documento…"
                       options={[
                         { value: "", label: "— selecione cliente ou fornecedor —" },
                         ...parceiroOptions,
@@ -997,9 +1030,11 @@ export function ContasModule({
                       {showVincularCadastro(perfil) && config.pessoaCadastro ? (
                         <div className="space-y-2">
                           {vincularCadastro ? (
-                            <Select
+                            <SearchableSelect
                               value={form.pessoa}
                               onChange={applyParceiroSelecionado}
+                              placeholder="Buscar cliente ou fornecedor…"
+                              searchPlaceholder="Digite nome ou documento…"
                               options={[
                                 { value: "", label: "— selecione cliente ou fornecedor —" },
                                 ...parceiroOptions,

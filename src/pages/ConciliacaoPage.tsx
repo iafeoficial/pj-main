@@ -1,6 +1,16 @@
 import { useMemo, useRef, useState } from "react";
 import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle } from "lucide-react";
-import type { Categoria, ExtratoBancario, RegraConciliacao, TransacaoBancaria } from "@/types/domain";
+import type {
+  Categoria,
+  CentroCusto,
+  Cliente,
+  ContaFinanceira,
+  ExtratoBancario,
+  Fornecedor,
+  RegraConciliacao,
+  TipoPessoa,
+  TransacaoBancaria,
+} from "@/types/domain";
 import {
   conciliacaoService,
   categoriaSugerida,
@@ -8,8 +18,11 @@ import {
   sugerirConciliacao,
   type Sugestao,
 } from "@/data/conciliacao";
-import { categoriaService } from "@/data/services";
+import { categoriaService, centroCustoService, contaFinanceiraService } from "@/data/services";
+import { clienteService, fornecedorService } from "@/data/cadastros";
 import { parseOFX } from "@/lib/ofx";
+import { labelContaFinanceira } from "@/lib/contaFinanceira";
+import { formatCpfCnpj } from "@/lib/masks";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { formatBRL, formatDate } from "@/lib/utils";
@@ -19,6 +32,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
+import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -60,7 +74,76 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as Categoria[]
   );
+  const { data: clientesAtivos } = useAsyncData(
+    () => clienteService.listAtivos(empresaId),
+    [empresaId, version],
+    [] as Cliente[]
+  );
+  const { data: fornecedoresAtivos } = useAsyncData(
+    () => fornecedorService.listAtivos(empresaId),
+    [empresaId, version],
+    [] as Fornecedor[]
+  );
+  const { data: centros } = useAsyncData(
+    () => centroCustoService.listAtivos(empresaId),
+    [empresaId, version],
+    [] as CentroCusto[]
+  );
+  const { data: contasFinanceiras } = useAsyncData(
+    () => contaFinanceiraService.listAtivas(empresaId),
+    [empresaId, version],
+    [] as ContaFinanceira[]
+  );
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
+
+  type ParceiroOpt = {
+    nome: string;
+    cnpjCpf: string;
+    tipoPessoa: TipoPessoa;
+    kinds: ("cliente" | "fornecedor")[];
+  };
+
+  const parceirosCadastro = useMemo(() => {
+    const map = new Map<string, ParceiroOpt>();
+    for (const c of clientesAtivos) {
+      map.set(c.nome, {
+        nome: c.nome,
+        cnpjCpf: c.cnpjCpf ?? "",
+        tipoPessoa: c.tipoPessoa ?? "pj",
+        kinds: ["cliente"],
+      });
+    }
+    for (const f of fornecedoresAtivos) {
+      const existing = map.get(f.nome);
+      if (existing) {
+        if (!existing.kinds.includes("fornecedor")) existing.kinds.push("fornecedor");
+        if (!existing.cnpjCpf && f.cnpjCpf) existing.cnpjCpf = f.cnpjCpf;
+      } else {
+        map.set(f.nome, {
+          nome: f.nome,
+          cnpjCpf: f.cnpjCpf ?? "",
+          tipoPessoa: f.tipoPessoa ?? "pj",
+          kinds: ["fornecedor"],
+        });
+      }
+    }
+    return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [clientesAtivos, fornecedoresAtivos]);
+
+  const parceiroOptions = useMemo(
+    () =>
+      parceirosCadastro.map((p) => {
+        const kind =
+          p.kinds.includes("cliente") && p.kinds.includes("fornecedor")
+            ? "Cliente · Fornecedor"
+            : p.kinds[0] === "cliente"
+              ? "Cliente"
+              : "Fornecedor";
+        const doc = p.cnpjCpf ? ` — ${p.cnpjCpf}` : "";
+        return { value: p.nome, label: `${p.nome} (${kind})${doc}` };
+      }),
+    [parceirosCadastro]
+  );
 
   const [filtro, setFiltro] = useState<string>("pendente");
 
@@ -71,6 +154,11 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [lancarAlvo, setLancarAlvo] = useState<TransacaoBancaria | null>(null);
   const [lancarPessoa, setLancarPessoa] = useState("");
   const [lancarCategoriaId, setLancarCategoriaId] = useState("");
+  const [lancarTipoPessoa, setLancarTipoPessoa] = useState<TipoPessoa>("pj");
+  const [lancarCnpjCpf, setLancarCnpjCpf] = useState("");
+  const [lancarCentroId, setLancarCentroId] = useState("");
+  const [lancarContaFinId, setLancarContaFinId] = useState("");
+  const [lancarObs, setLancarObs] = useState("");
   const [lancarErro, setLancarErro] = useState("");
   const [lancando, setLancando] = useState(false);
 
@@ -138,18 +226,39 @@ function Inner({ empresaId }: { empresaId: string }) {
     }
   }
 
+  function applyParceiroLancar(nome: string) {
+    setLancarPessoa(nome);
+    const p = parceirosCadastro.find((x) => x.nome === nome);
+    if (p) {
+      setLancarTipoPessoa(p.tipoPessoa);
+      setLancarCnpjCpf(p.cnpjCpf ? formatCpfCnpj(p.cnpjCpf) : "");
+    }
+  }
+
   function abrirLancar(t: TransacaoBancaria) {
     const catId = categoriaSugerida(regras, t.tipo, t.descricao) ?? "";
     setLancarAlvo(t);
     setLancarPessoa(t.descricao || "");
     setLancarCategoriaId(catId);
+    setLancarTipoPessoa("pj");
+    setLancarCnpjCpf("");
+    setLancarCentroId("");
+    setLancarContaFinId("");
+    setLancarObs("");
     setLancarErro("");
+    const match = parceirosCadastro.find(
+      (p) =>
+        t.descricao &&
+        (t.descricao.toLowerCase().includes(p.nome.toLowerCase().slice(0, 8)) ||
+          p.nome.toLowerCase().includes(t.descricao.toLowerCase().slice(0, 8)))
+    );
+    if (match) applyParceiroLancar(match.nome);
   }
 
   async function confirmarLancar() {
     if (!lancarAlvo) return;
     if (!lancarPessoa.trim()) {
-      setLancarErro("Informe o nome da pessoa.");
+      setLancarErro("Informe ou selecione o favorecido/pagador.");
       return;
     }
     if (!lancarCategoriaId) {
@@ -158,9 +267,16 @@ function Inner({ empresaId }: { empresaId: string }) {
     }
     setLancando(true);
     try {
+      const docHint = lancarCnpjCpf.trim()
+        ? `${lancarTipoPessoa === "pj" ? "CNPJ" : "CPF"}: ${lancarCnpjCpf.trim()}`
+        : "";
+      const obsParts = [lancarObs.trim(), docHint].filter(Boolean);
       const res = await conciliacaoService.lancarDeTransacao(empresaId, lancarAlvo.id, {
         pessoa: lancarPessoa.trim(),
         categoriaId: lancarCategoriaId,
+        centroCustoId: lancarCentroId || null,
+        contaFinanceiraId: lancarAlvo.tipo === "debito" ? lancarContaFinId || null : null,
+        observacao: obsParts.join(" · ") || undefined,
       });
       bumpData();
       notify(
@@ -538,56 +654,161 @@ function Inner({ empresaId }: { empresaId: string }) {
             : "Lançar em Contas a Pagar"
         }
         onClose={() => !lancando && setLancarAlvo(null)}
-        width="max-w-lg"
+        width="max-w-2xl"
         footer={
           <>
-            <button className="btn-outline" disabled={lancando} onClick={() => setLancarAlvo(null)}>
+            <button className="btn-outline btn-sm" disabled={lancando} onClick={() => setLancarAlvo(null)}>
               Cancelar
             </button>
-            <button className="btn-primary" disabled={lancando} onClick={confirmarLancar}>
+            <button className="btn-primary btn-sm" disabled={lancando} onClick={confirmarLancar}>
               {lancando ? "Salvando…" : "Confirmar lançamento"}
             </button>
           </>
         }
       >
         {lancarAlvo && (
-          <div className="space-y-4">
-            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
-              <div className="flex justify-between">
+          <div className="space-y-3 [&_.label]:text-xs">
+            <div className="rounded-md bg-muted/50 px-3 py-2 text-xs sm:text-sm">
+              <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">{formatDate(lancarAlvo.data)}</span>
                 <span
-                  className={lancarAlvo.tipo === "credito" ? "text-emerald-600" : "text-red-600"}
+                  className={
+                    lancarAlvo.tipo === "credito"
+                      ? "font-medium text-emerald-600"
+                      : "font-medium text-red-600"
+                  }
                 >
                   {formatBRL(lancarAlvo.valor)}
                 </span>
               </div>
-              <div className="font-medium">{lancarAlvo.descricao || "—"}</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                O título será criado já{" "}
-                {lancarAlvo.tipo === "credito" ? "recebido" : "pago"} na data do banco.
+              <div className="mt-0.5 font-medium leading-snug">{lancarAlvo.descricao || "—"}</div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Título criado já {lancarAlvo.tipo === "credito" ? "recebido" : "pago"} na data do
+                banco. Competência e vencimento = data do extrato.
               </p>
             </div>
-            <Field
-              label={lancarAlvo.tipo === "credito" ? "Pagador / cliente" : "Favorecido / fornecedor"}
-              required
-            >
-              <input
-                className="input"
-                value={lancarPessoa}
-                onChange={(e) => setLancarPessoa(e.target.value)}
-                autoFocus
-              />
-            </Field>
-            <Field label="Categoria" required error={lancarErro || undefined}>
-              <Select
-                value={lancarCategoriaId}
-                onChange={setLancarCategoriaId}
-                options={[
-                  { value: "", label: "— selecione —" },
-                  ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
-                ]}
-              />
-            </Field>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Categoria" required error={lancarErro || undefined} className="sm:col-span-2">
+                <Select
+                  value={lancarCategoriaId}
+                  onChange={(v) => {
+                    setLancarCategoriaId(v);
+                    setLancarErro("");
+                  }}
+                  options={[
+                    { value: "", label: "— selecione —" },
+                    ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
+                  ]}
+                />
+              </Field>
+
+              <Field
+                label={lancarAlvo.tipo === "credito" ? "Pagador / cliente" : "Favorecido / fornecedor"}
+                required
+                hint="Busque cliente ou fornecedor cadastrado, ou digite um nome livre."
+                className="sm:col-span-2"
+              >
+                <SearchableSelect
+                  value={lancarPessoa}
+                  onChange={applyParceiroLancar}
+                  allowFreeText
+                  placeholder="Buscar cliente ou fornecedor…"
+                  searchPlaceholder="Digite nome ou documento…"
+                  options={parceiroOptions}
+                />
+              </Field>
+
+              <Field label="Tipo">
+                <Select
+                  value={lancarTipoPessoa}
+                  onChange={(v) => {
+                    setLancarTipoPessoa(v as TipoPessoa);
+                    setLancarCnpjCpf("");
+                  }}
+                  options={[
+                    { value: "pj", label: "Pessoa jurídica (CNPJ)" },
+                    { value: "pf", label: "Pessoa física (CPF)" },
+                  ]}
+                />
+              </Field>
+              <Field
+                label={lancarTipoPessoa === "pj" ? "CNPJ" : "CPF"}
+                hint="Opcional (informativo)."
+              >
+                <input
+                  className="input h-9 uppercase"
+                  inputMode={lancarTipoPessoa === "pj" ? "text" : "numeric"}
+                  maxLength={18}
+                  value={lancarCnpjCpf}
+                  onChange={(e) => setLancarCnpjCpf(formatCpfCnpj(e.target.value))}
+                  placeholder={
+                    lancarTipoPessoa === "pj" ? "00.000.000/0000-00" : "000.000.000-00"
+                  }
+                />
+              </Field>
+
+              <Field label="Valor (R$)">
+                <input
+                  className="input h-9 bg-muted/40"
+                  readOnly
+                  value={Math.abs(lancarAlvo.valor).toFixed(2)}
+                />
+              </Field>
+              <Field label="Status">
+                <input
+                  className="input h-9 bg-muted/40"
+                  readOnly
+                  value={lancarAlvo.tipo === "credito" ? "Recebida" : "Paga"}
+                />
+              </Field>
+
+              <Field label="Competência">
+                <input className="input h-9 bg-muted/40" readOnly value={formatDate(lancarAlvo.data)} />
+              </Field>
+              <Field label="Vencimento">
+                <input className="input h-9 bg-muted/40" readOnly value={formatDate(lancarAlvo.data)} />
+              </Field>
+
+              {lancarAlvo.tipo === "debito" && (
+                <Field label="Conta / Cartão">
+                  <Select
+                    value={lancarContaFinId}
+                    onChange={setLancarContaFinId}
+                    options={[
+                      { value: "", label: "— sem conta —" },
+                      ...contasFinanceiras.map((c) => ({
+                        value: c.id,
+                        label: labelContaFinanceira(c),
+                      })),
+                    ]}
+                  />
+                </Field>
+              )}
+              <Field
+                label="Centro de custo"
+                className={lancarAlvo.tipo === "credito" ? "sm:col-span-2" : undefined}
+              >
+                <Select
+                  value={lancarCentroId}
+                  onChange={setLancarCentroId}
+                  options={[
+                    { value: "", label: "— sem centro —" },
+                    ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                  ]}
+                />
+              </Field>
+
+              <Field label="Observação" className="sm:col-span-2">
+                <textarea
+                  className="input min-h-[4rem] py-2 text-sm"
+                  rows={2}
+                  value={lancarObs}
+                  onChange={(e) => setLancarObs(e.target.value)}
+                  placeholder="Opcional"
+                />
+              </Field>
+            </div>
           </div>
         )}
       </Modal>

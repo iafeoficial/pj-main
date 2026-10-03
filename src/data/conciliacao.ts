@@ -126,7 +126,13 @@ export const conciliacaoService = {
   async lancarDeTransacao(
     empresaId: string,
     transacaoId: string,
-    input: { pessoa: string; categoriaId: string }
+    input: {
+      pessoa: string;
+      categoriaId: string;
+      centroCustoId?: string | null;
+      contaFinanceiraId?: string | null;
+      observacao?: string;
+    }
   ) {
     const t = await transacaoTable.find(empresaId, transacaoId);
     if (!t) throw new Error("Transação não encontrada.");
@@ -138,21 +144,25 @@ export const conciliacaoService = {
     if (!input.categoriaId) throw new Error("Escolha a categoria.");
 
     const valor = Math.abs(t.valor);
-    const obs = t.documento
+    const origem = t.documento
       ? `Origem extrato OFX · Doc: ${t.documento}`
       : "Origem extrato OFX";
+    const obsExtra = input.observacao?.trim();
+    const observacao = obsExtra ? `${origem}\n${obsExtra}` : origem;
+    const centroCustoId = input.centroCustoId || null;
+    const contaFinanceiraId = input.contaFinanceiraId || null;
 
     if (t.tipo === "debito") {
       const conta = await contaPagarService.create(empresaId, {
         fornecedor: pessoa,
         categoriaId: input.categoriaId,
-        centroCustoId: null,
-        contaFinanceiraId: null,
+        centroCustoId,
+        contaFinanceiraId,
         valor,
         dataCompetencia: t.data,
         dataVencimento: t.data,
         status: "aberta",
-        observacao: obs,
+        observacao,
       });
       await contaPagarService.registrarPagamento(empresaId, conta.id, valor, t.data);
       await transacaoTable.update(empresaId, transacaoId, {
@@ -173,12 +183,12 @@ export const conciliacaoService = {
     const conta = await contaReceberService.create(empresaId, {
       cliente: pessoa,
       categoriaId: input.categoriaId,
-      centroCustoId: null,
+      centroCustoId,
       valor,
       dataCompetencia: t.data,
       dataVencimento: t.data,
       status: "aberta",
-      observacao: obs,
+      observacao,
     });
     await contaReceberService.registrarRecebimento(empresaId, conta.id, valor, t.data);
     await transacaoTable.update(empresaId, transacaoId, {
