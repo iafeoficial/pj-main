@@ -1,9 +1,10 @@
+import type { ReactNode } from "react";
 import { Modal } from "./Modal";
 
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  message: string;
+  message: ReactNode;
   confirmLabel?: string;
   destructive?: boolean;
   onConfirm: () => void;
@@ -38,7 +39,11 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-muted-foreground">{message}</p>
+      {typeof message === "string" ? (
+        <p className="text-sm text-muted-foreground">{message}</p>
+      ) : (
+        <div className="text-sm text-muted-foreground">{message}</div>
+      )}
     </Modal>
   );
 }

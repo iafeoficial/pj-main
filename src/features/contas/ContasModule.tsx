@@ -314,8 +314,9 @@ export function ContasModule({
   const [baixaData, setBaixaData] = useState(today());
   const [baixaHistorico, setBaixaHistorico] = useState<PagamentoConta[]>([]);
 
-  const [toDelete, setToDelete] = useState<ContaLike | null>(null);
+  const [toDelete, setToDelete] = useState<ContaLike[]>([]);
   const [toCancel, setToCancel] = useState<ContaLike | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
 
   type ContaDraftExtra = {
     wizardStep: 1 | 2;
@@ -350,6 +351,36 @@ export function ContasModule({
     () => (filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus)),
     [contas, filtroStatus]
   );
+
+  const allFilteredSelected =
+    filtradas.length > 0 && filtradas.every((c) => selectedIds.has(c.id));
+  const someFilteredSelected = filtradas.some((c) => selectedIds.has(c.id));
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllFiltered() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (filtradas.every((c) => next.has(c.id))) {
+        for (const c of filtradas) next.delete(c.id);
+      } else {
+        for (const c of filtradas) next.add(c.id);
+      }
+      return next;
+    });
+  }
+
+  function openDelete(items: ContaLike[]) {
+    if (items.length === 0) return;
+    setToDelete(items);
+  }
 
   useEffect(() => {
     if (!highlightId) return;
@@ -654,15 +685,31 @@ export function ContasModule({
   }
 
   async function confirmDelete() {
-    if (!toDelete) return;
-    try {
-      await config.remove(empresaId, toDelete.id);
-      bumpData();
-      notify("Lançamento excluído.");
-    } catch (e) {
-      notify((e as Error).message, "error");
+    if (toDelete.length === 0) return;
+    const ids = toDelete.map((c) => c.id);
+    let ok = 0;
+    const erros: string[] = [];
+    for (const id of ids) {
+      try {
+        await config.remove(empresaId, id);
+        ok++;
+      } catch (e) {
+        erros.push((e as Error).message);
+      }
     }
-    setToDelete(null);
+    bumpData();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+    setToDelete([]);
+    if (ok > 0) {
+      notify(ok === 1 ? "Lançamento excluído." : `${ok} lançamentos excluídos.`);
+    }
+    if (erros.length > 0) {
+      notify(erros[0], "error");
+    }
   }
 
   const STATUS_OPTS = ["todos", "aberta", "parcial", config.statusBaixado, "vencida", "rascunho", "cancelada"];
@@ -687,7 +734,7 @@ export function ContasModule({
         <SummaryCard label="Em aberto" value={formatBRL(totais.emAberto)} tone="warning" />
       </div>
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {STATUS_OPTS.map((s) => (
           <button
             key={s}
@@ -701,6 +748,27 @@ export function ContasModule({
             {s === "todos" ? "Todos" : s}
           </button>
         ))}
+        {!readOnly && selectedIds.size > 0 && (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {selectedIds.size} selecionado{selectedIds.size > 1 ? "s" : ""}
+            </span>
+            <button
+              type="button"
+              className="btn-outline btn-sm text-destructive"
+              onClick={() => openDelete(contas.filter((c) => selectedIds.has(c.id)))}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Excluir selecionados
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Limpar
+            </button>
+          </div>
+        )}
       </div>
 
       {filtradas.length === 0 ? (
@@ -721,6 +789,20 @@ export function ContasModule({
           <table className="w-full text-sm">
             <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase text-muted-foreground">
               <tr>
+                {!readOnly && (
+                  <th className="w-10 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border"
+                      aria-label="Selecionar todos"
+                      checked={allFilteredSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someFilteredSelected && !allFilteredSelected;
+                      }}
+                      onChange={toggleSelectAllFiltered}
+                    />
+                  </th>
+                )}
                 <th className="px-4 py-2.5 font-medium">{config.pessoaLabel}</th>
                 <th className="px-4 py-2.5 font-medium">Categoria</th>
                 {config.usaContaFinanceira && (
@@ -738,14 +820,28 @@ export function ContasModule({
                 const devido = c.valorDevido ?? c.valor;
                 const saldo = devido - c.valorBaixado;
                 const baixavel = c.status !== config.statusBaixado && c.status !== "cancelada";
+                const selected = selectedIds.has(c.id);
                 return (
                   <tr
                     key={c.id}
                     ref={(el) => {
                       if (el) rowRefs.current.set(c.id, el);
                     }}
-                    className={`hover:bg-muted/30 ${c.id === highlightId ? "bg-primary/10 ring-2 ring-primary/30" : ""}`}
+                    className={`hover:bg-muted/30 ${
+                      selected ? "bg-primary/5" : ""
+                    } ${c.id === highlightId ? "bg-primary/10 ring-2 ring-primary/30" : ""}`}
                   >
+                    {!readOnly && (
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          className="rounded border-border"
+                          aria-label={`Selecionar ${c.pessoa}`}
+                          checked={selected}
+                          onChange={() => toggleSelect(c.id)}
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <div className="font-medium">{c.pessoa}</div>
                       {c.parcelaNumero && c.parcelaTotal ? (
@@ -819,7 +915,7 @@ export function ContasModule({
                             )}
                             <button
                               className="btn-ghost btn-sm text-destructive"
-                              onClick={() => setToDelete(c)}
+                              onClick={() => openDelete([c])}
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -1328,13 +1424,48 @@ export function ContasModule({
       />
 
       <ConfirmDialog
-        open={!!toDelete}
-        title="Excluir lançamento"
-        message="Esta ação remove o lançamento permanentemente. Confirmar?"
-        confirmLabel="Excluir"
+        open={toDelete.length > 0}
+        title={
+          toDelete.length > 1
+            ? `Excluir ${toDelete.length} lançamentos`
+            : "Excluir lançamento"
+        }
+        message={
+          <div className="space-y-3">
+            <p>
+              Esta ação é <span className="font-medium text-destructive">irreversível</span>.
+              {toDelete.length > 1
+                ? " Os lançamentos abaixo serão removidos permanentemente:"
+                : " O lançamento abaixo será removido permanentemente:"}
+            </p>
+            <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-md border border-border bg-muted/40 px-3 py-2">
+              {toDelete.map((c) => {
+                const devido = c.valorDevido ?? c.valor;
+                const parcela =
+                  c.parcelaNumero && c.parcelaTotal
+                    ? ` · Parcela ${c.parcelaNumero}/${c.parcelaTotal}`
+                    : "";
+                return (
+                  <li key={c.id} className="flex justify-between gap-3 text-foreground">
+                    <span className="min-w-0 truncate">
+                      {c.pessoa}
+                      {parcela}
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {formatDate(c.dataVencimento)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 tabular-nums">{formatBRL(devido)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        }
+        confirmLabel={toDelete.length > 1 ? `Excluir ${toDelete.length}` : "Excluir"}
         destructive
         onConfirm={confirmDelete}
-        onCancel={() => setToDelete(null)}
+        onCancel={() => setToDelete([])}
       />
     </>
   );
