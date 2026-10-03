@@ -3,15 +3,32 @@ import type {
   ConciliacaoStatus,
   ContaPagar,
   ContaReceber,
+  RecorrenciaTipo,
   RegraConciliacao,
   TransacaoBancaria,
   TransacaoTipo,
 } from "@/types/domain";
 import type { OfxResultado } from "@/lib/ofx";
+import { addMonthsIso, avancarRecorrencia } from "@/lib/contaPagarExtras";
+import { uid } from "@/lib/utils";
 import { logAudit } from "./audit";
 import { extratoTable, regraTable, transacaoTable } from "./repos";
 import { contaPagarService, contaReceberService } from "./services";
 import { reativarTransacoesPorTitulo } from "./transacaoVinculo";
+
+export type LancarDeTransacaoInput = {
+  pessoa: string;
+  categoriaId: string;
+  centroCustoId?: string | null;
+  contaFinanceiraId?: string | null;
+  observacao?: string;
+  /** N títulos mensais; valor do extrato = valor de cada parcela. */
+  parcelas?: number;
+  recorrencia?: RecorrenciaTipo | null;
+  recorrenciaDias?: number | null;
+  /** Inclui a ocorrência baixada do extrato. */
+  recorrenciaOcorrencias?: number;
+};
 
 export interface ImportResumo {
   extratoId: string;
@@ -122,17 +139,15 @@ export const conciliacaoService = {
   /**
    * Cria Conta a Pagar (débito) ou Conta a Receber (crédito) a partir da linha do extrato,
    * já baixada na data do banco, e marca a transação como conciliada.
+   *
+   * Com `parcelas` > 1 ou `recorrencia` + ocorrências > 1: a 1ª título é baixada
+   * (valor do extrato) e as demais ficam em aberto com vencimentos futuros.
+   * No OFX o valor do extrato é o valor de cada parcela/ocorrência (não é rateado).
    */
   async lancarDeTransacao(
     empresaId: string,
     transacaoId: string,
-    input: {
-      pessoa: string;
-      categoriaId: string;
-      centroCustoId?: string | null;
-      contaFinanceiraId?: string | null;
-      observacao?: string;
-    }
+    input: LancarDeTransacaoInput
   ) {
     const t = await transacaoTable.find(empresaId, transacaoId);
     if (!t) throw new Error("Transação não encontrada.");
@@ -148,26 +163,96 @@ export const conciliacaoService = {
       ? `Origem extrato OFX · Doc: ${t.documento}`
       : "Origem extrato OFX";
     const obsExtra = input.observacao?.trim();
-    const observacao = obsExtra ? `${origem}\n${obsExtra}` : origem;
+    const observacaoBase = obsExtra ? `${origem}\n${obsExtra}` : origem;
     const centroCustoId = input.centroCustoId || null;
     const contaFinanceiraId = input.contaFinanceiraId || null;
 
+    const parcelas = Math.max(1, Math.min(60, Math.floor(input.parcelas ?? 1)));
+    const recorrencia = parcelas > 1 ? null : (input.recorrencia ?? null);
+    const ocorrencias = recorrencia
+      ? Math.max(1, Math.min(36, Math.floor(input.recorrenciaOcorrencias ?? 1)))
+      : 1;
+    if (recorrencia === "personalizada") {
+      const dias = Math.floor(input.recorrenciaDias ?? 0);
+      if (!dias || dias < 1) {
+        throw new Error("Informe o intervalo em dias para a repetição personalizada.");
+      }
+    }
+    const diasRec =
+      recorrencia === "personalizada"
+        ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias ?? 1)))
+        : null;
+
     if (t.tipo === "debito") {
-      const conta = await contaPagarService.create(empresaId, {
-        fornecedor: pessoa,
-        categoriaId: input.categoriaId,
-        centroCustoId,
-        contaFinanceiraId,
-        valor,
-        dataCompetencia: t.data,
-        dataVencimento: t.data,
-        status: "aberta",
-        observacao,
-      });
-      await contaPagarService.registrarPagamento(empresaId, conta.id, valor, t.data);
+      let primeira: ContaPagar;
+      let qtdExtra = 0;
+
+      if (parcelas > 1) {
+        const grupo = uid();
+        const criadas: ContaPagar[] = [];
+        for (let i = 0; i < parcelas; i++) {
+          const c = await contaPagarService.create(empresaId, {
+            fornecedor: pessoa,
+            categoriaId: input.categoriaId,
+            centroCustoId,
+            contaFinanceiraId,
+            valor,
+            dataCompetencia: addMonthsIso(t.data, i),
+            dataVencimento: addMonthsIso(t.data, i),
+            status: "aberta",
+            observacao: `${observacaoBase}\nParcela ${i + 1}/${parcelas}`,
+            parcelaNumero: i + 1,
+            parcelaTotal: parcelas,
+            grupoParcelamento: grupo,
+          });
+          criadas.push(c);
+        }
+        primeira = criadas[0];
+        qtdExtra = parcelas - 1;
+      } else if (recorrencia && ocorrencias > 1) {
+        const grupo = uid();
+        const criadas: ContaPagar[] = [];
+        let venc = t.data;
+        let comp = t.data;
+        for (let i = 0; i < ocorrencias; i++) {
+          const c = await contaPagarService.create(empresaId, {
+            fornecedor: pessoa,
+            categoriaId: input.categoriaId,
+            centroCustoId,
+            contaFinanceiraId,
+            valor,
+            dataCompetencia: comp,
+            dataVencimento: venc,
+            status: "aberta",
+            observacao: observacaoBase,
+            recorrencia,
+            recorrenciaDias: diasRec,
+            grupoRecorrencia: grupo,
+          });
+          criadas.push(c);
+          venc = avancarRecorrencia(venc, recorrencia, diasRec);
+          comp = avancarRecorrencia(comp, recorrencia, diasRec);
+        }
+        primeira = criadas[0];
+        qtdExtra = ocorrencias - 1;
+      } else {
+        primeira = await contaPagarService.create(empresaId, {
+          fornecedor: pessoa,
+          categoriaId: input.categoriaId,
+          centroCustoId,
+          contaFinanceiraId,
+          valor,
+          dataCompetencia: t.data,
+          dataVencimento: t.data,
+          status: "aberta",
+          observacao: observacaoBase,
+        });
+      }
+
+      await contaPagarService.registrarPagamento(empresaId, primeira.id, valor, t.data);
       await transacaoTable.update(empresaId, transacaoId, {
         statusConciliacao: "conciliada",
-        contaPagarId: conta.id,
+        contaPagarId: primeira.id,
         contaReceberId: null,
       });
       await logAudit({
@@ -175,25 +260,72 @@ export const conciliacaoService = {
         entidade: "TransacaoBancaria",
         entidadeId: transacaoId,
         acao: "inclusao",
-        descricao: `Conta a pagar criada e baixada a partir do extrato (${pessoa}).`,
+        descricao:
+          qtdExtra > 0
+            ? `Conta a pagar (1ª de ${qtdExtra + 1}) criada/baixada a partir do extrato (${pessoa}).`
+            : `Conta a pagar criada e baixada a partir do extrato (${pessoa}).`,
       });
-      return { tipo: "pagar" as const, contaId: conta.id };
+      return { tipo: "pagar" as const, contaId: primeira.id, extras: qtdExtra };
     }
 
-    const conta = await contaReceberService.create(empresaId, {
-      cliente: pessoa,
-      categoriaId: input.categoriaId,
-      centroCustoId,
-      valor,
-      dataCompetencia: t.data,
-      dataVencimento: t.data,
-      status: "aberta",
-      observacao,
-    });
-    await contaReceberService.registrarRecebimento(empresaId, conta.id, valor, t.data);
+    let primeira: ContaReceber;
+    let qtdExtra = 0;
+
+    if (parcelas > 1) {
+      const criadas: ContaReceber[] = [];
+      for (let i = 0; i < parcelas; i++) {
+        const c = await contaReceberService.create(empresaId, {
+          cliente: pessoa,
+          categoriaId: input.categoriaId,
+          centroCustoId,
+          valor,
+          dataCompetencia: addMonthsIso(t.data, i),
+          dataVencimento: addMonthsIso(t.data, i),
+          status: "aberta",
+          observacao: `${observacaoBase}\nParcela ${i + 1}/${parcelas}`,
+        });
+        criadas.push(c);
+      }
+      primeira = criadas[0];
+      qtdExtra = parcelas - 1;
+    } else if (recorrencia && ocorrencias > 1) {
+      const criadas: ContaReceber[] = [];
+      let venc = t.data;
+      let comp = t.data;
+      for (let i = 0; i < ocorrencias; i++) {
+        const c = await contaReceberService.create(empresaId, {
+          cliente: pessoa,
+          categoriaId: input.categoriaId,
+          centroCustoId,
+          valor,
+          dataCompetencia: comp,
+          dataVencimento: venc,
+          status: "aberta",
+          observacao: observacaoBase,
+        });
+        criadas.push(c);
+        venc = avancarRecorrencia(venc, recorrencia, diasRec);
+        comp = avancarRecorrencia(comp, recorrencia, diasRec);
+      }
+      primeira = criadas[0];
+      qtdExtra = ocorrencias - 1;
+    } else {
+      primeira = await contaReceberService.create(empresaId, {
+        cliente: pessoa,
+        categoriaId: input.categoriaId,
+        centroCustoId,
+        valor,
+        dataCompetencia: t.data,
+        dataVencimento: t.data,
+        status: "aberta",
+        observacao: observacaoBase,
+      });
+    }
+
+    await contaReceberService.registrarRecebimento(empresaId, primeira.id, valor, t.data);
     await transacaoTable.update(empresaId, transacaoId, {
       statusConciliacao: "conciliada",
-      contaReceberId: conta.id,
+      contaReceberId: primeira.id,
       contaPagarId: null,
     });
     await logAudit({
@@ -201,9 +333,12 @@ export const conciliacaoService = {
       entidade: "TransacaoBancaria",
       entidadeId: transacaoId,
       acao: "inclusao",
-      descricao: `Conta a receber criada e baixada a partir do extrato (${pessoa}).`,
+      descricao:
+        qtdExtra > 0
+          ? `Conta a receber (1ª de ${qtdExtra + 1}) criada/baixada a partir do extrato (${pessoa}).`
+          : `Conta a receber criada e baixada a partir do extrato (${pessoa}).`,
     });
-    return { tipo: "receber" as const, contaId: conta.id };
+    return { tipo: "receber" as const, contaId: primeira.id, extras: qtdExtra };
   },
 
   /**

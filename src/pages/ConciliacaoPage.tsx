@@ -7,6 +7,7 @@ import type {
   ContaFinanceira,
   ExtratoBancario,
   Fornecedor,
+  RecorrenciaTipo,
   RegraConciliacao,
   TipoPessoa,
   TransacaoBancaria,
@@ -33,6 +34,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
+import { ParcelasRepeticaoFields } from "@/features/contas/ContasPagarExtras";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -152,6 +154,7 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [categoriaIdSugerida, setCategoriaIdSugerida] = useState<string | null>(null);
 
   const [lancarAlvo, setLancarAlvo] = useState<TransacaoBancaria | null>(null);
+  const [lancarTab, setLancarTab] = useState<"dados" | "parcelas">("dados");
   const [lancarPessoa, setLancarPessoa] = useState("");
   const [lancarCategoriaId, setLancarCategoriaId] = useState("");
   const [lancarTipoPessoa, setLancarTipoPessoa] = useState<TipoPessoa>("pj");
@@ -159,6 +162,10 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [lancarCentroId, setLancarCentroId] = useState("");
   const [lancarContaFinId, setLancarContaFinId] = useState("");
   const [lancarObs, setLancarObs] = useState("");
+  const [lancarParcelas, setLancarParcelas] = useState(1);
+  const [lancarRecorrencia, setLancarRecorrencia] = useState<RecorrenciaTipo | null>(null);
+  const [lancarRecorrenciaDias, setLancarRecorrenciaDias] = useState(30);
+  const [lancarRecorrenciaOcorrencias, setLancarRecorrenciaOcorrencias] = useState(1);
   const [lancarErro, setLancarErro] = useState("");
   const [lancando, setLancando] = useState(false);
 
@@ -238,6 +245,7 @@ function Inner({ empresaId }: { empresaId: string }) {
   function abrirLancar(t: TransacaoBancaria) {
     const catId = categoriaSugerida(regras, t.tipo, t.descricao) ?? "";
     setLancarAlvo(t);
+    setLancarTab("dados");
     setLancarPessoa(t.descricao || "");
     setLancarCategoriaId(catId);
     setLancarTipoPessoa("pj");
@@ -245,6 +253,10 @@ function Inner({ empresaId }: { empresaId: string }) {
     setLancarCentroId("");
     setLancarContaFinId("");
     setLancarObs("");
+    setLancarParcelas(1);
+    setLancarRecorrencia(null);
+    setLancarRecorrenciaDias(30);
+    setLancarRecorrenciaOcorrencias(1);
     setLancarErro("");
     const match = parceirosCadastro.find(
       (p) =>
@@ -259,10 +271,20 @@ function Inner({ empresaId }: { empresaId: string }) {
     if (!lancarAlvo) return;
     if (!lancarPessoa.trim()) {
       setLancarErro("Informe ou selecione o favorecido/pagador.");
+      setLancarTab("dados");
       return;
     }
     if (!lancarCategoriaId) {
       setLancarErro("Escolha a categoria.");
+      setLancarTab("dados");
+      return;
+    }
+    if (
+      lancarRecorrencia === "personalizada" &&
+      (!lancarRecorrenciaDias || lancarRecorrenciaDias < 1)
+    ) {
+      setLancarErro("Informe o intervalo em dias (ex.: 12 ou 20).");
+      setLancarTab("parcelas");
       return;
     }
     setLancando(true);
@@ -277,12 +299,20 @@ function Inner({ empresaId }: { empresaId: string }) {
         centroCustoId: lancarCentroId || null,
         contaFinanceiraId: lancarAlvo.tipo === "debito" ? lancarContaFinId || null : null,
         observacao: obsParts.join(" · ") || undefined,
+        parcelas: lancarParcelas,
+        recorrencia: lancarRecorrencia,
+        recorrenciaDias: lancarRecorrenciaDias,
+        recorrenciaOcorrencias: lancarRecorrenciaOcorrencias,
       });
       bumpData();
+      const extras = res.extras ?? 0;
+      const destino = res.tipo === "pagar" ? "Contas a Pagar" : "Contas a Receber";
       notify(
-        res.tipo === "pagar"
-          ? "Conta a pagar criada e baixada a partir do extrato."
-          : "Conta a receber criada e baixada a partir do extrato."
+        extras > 0
+          ? `1ª parcela baixada; +${extras} título(s) em aberto em ${destino}.`
+          : res.tipo === "pagar"
+            ? "Conta a pagar criada e baixada a partir do extrato."
+            : "Conta a receber criada e baixada a partir do extrato."
       );
       setLancarAlvo(null);
     } catch (e) {
@@ -683,132 +713,217 @@ function Inner({ empresaId }: { empresaId: string }) {
               </div>
               <div className="mt-0.5 font-medium leading-snug">{lancarAlvo.descricao || "—"}</div>
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Título criado já {lancarAlvo.tipo === "credito" ? "recebido" : "pago"} na data do
-                banco. Competência e vencimento = data do extrato.
+                {lancarParcelas > 1 || (lancarRecorrencia && lancarRecorrenciaOcorrencias > 1)
+                  ? "A 1ª parcela/ocorrência é baixada na data do banco; as demais ficam em aberto."
+                  : `Título criado já ${
+                      lancarAlvo.tipo === "credito" ? "recebido" : "pago"
+                    } na data do banco. Competência e vencimento = data do extrato.`}
               </p>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Categoria" required error={lancarErro || undefined} className="sm:col-span-2">
-                <Select
-                  value={lancarCategoriaId}
-                  onChange={(v) => {
-                    setLancarCategoriaId(v);
-                    setLancarErro("");
-                  }}
-                  options={[
-                    { value: "", label: "— selecione —" },
-                    ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
-                  ]}
-                />
-              </Field>
+            <div className="flex gap-1 border-b border-border">
+              {(
+                [
+                  { id: "dados" as const, label: "Dados" },
+                  { id: "parcelas" as const, label: "Parcelas / repetição" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors sm:text-sm ${
+                    lancarTab === tab.id
+                      ? "border-b-2 border-primary text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setLancarTab(tab.id)}
+                >
+                  {tab.label}
+                  {tab.id === "parcelas" &&
+                    (lancarParcelas > 1 ||
+                      (lancarRecorrencia && lancarRecorrenciaOcorrencias > 1)) && (
+                      <span className="ml-1 text-[10px] text-primary">●</span>
+                    )}
+                </button>
+              ))}
+            </div>
 
-              <Field
-                label={lancarAlvo.tipo === "credito" ? "Pagador / cliente" : "Favorecido / fornecedor"}
-                required
-                hint="Busque cliente ou fornecedor cadastrado, ou digite um nome livre."
-                className="sm:col-span-2"
-              >
-                <SearchableSelect
-                  value={lancarPessoa}
-                  onChange={applyParceiroLancar}
-                  allowFreeText
-                  placeholder="Buscar cliente ou fornecedor…"
-                  searchPlaceholder="Digite nome ou documento…"
-                  options={parceiroOptions}
-                />
-              </Field>
-
-              <Field label="Tipo">
-                <Select
-                  value={lancarTipoPessoa}
-                  onChange={(v) => {
-                    setLancarTipoPessoa(v as TipoPessoa);
-                    setLancarCnpjCpf("");
-                  }}
-                  options={[
-                    { value: "pj", label: "Pessoa jurídica (CNPJ)" },
-                    { value: "pf", label: "Pessoa física (CPF)" },
-                  ]}
-                />
-              </Field>
-              <Field
-                label={lancarTipoPessoa === "pj" ? "CNPJ" : "CPF"}
-                hint="Opcional (informativo)."
-              >
-                <input
-                  className="input h-9 uppercase"
-                  inputMode={lancarTipoPessoa === "pj" ? "text" : "numeric"}
-                  maxLength={18}
-                  value={lancarCnpjCpf}
-                  onChange={(e) => setLancarCnpjCpf(formatCpfCnpj(e.target.value))}
-                  placeholder={
-                    lancarTipoPessoa === "pj" ? "00.000.000/0000-00" : "000.000.000-00"
-                  }
-                />
-              </Field>
-
-              <Field label="Valor (R$)">
-                <input
-                  className="input h-9 bg-muted/40"
-                  readOnly
-                  value={Math.abs(lancarAlvo.valor).toFixed(2)}
-                />
-              </Field>
-              <Field label="Status">
-                <input
-                  className="input h-9 bg-muted/40"
-                  readOnly
-                  value={lancarAlvo.tipo === "credito" ? "Recebida" : "Paga"}
-                />
-              </Field>
-
-              <Field label="Competência">
-                <input className="input h-9 bg-muted/40" readOnly value={formatDate(lancarAlvo.data)} />
-              </Field>
-              <Field label="Vencimento">
-                <input className="input h-9 bg-muted/40" readOnly value={formatDate(lancarAlvo.data)} />
-              </Field>
-
-              {lancarAlvo.tipo === "debito" && (
-                <Field label="Conta / Cartão">
+            {lancarTab === "dados" && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field
+                  label="Categoria"
+                  required
+                  error={lancarErro || undefined}
+                  className="sm:col-span-2"
+                >
                   <Select
-                    value={lancarContaFinId}
-                    onChange={setLancarContaFinId}
+                    value={lancarCategoriaId}
+                    onChange={(v) => {
+                      setLancarCategoriaId(v);
+                      setLancarErro("");
+                    }}
                     options={[
-                      { value: "", label: "— sem conta —" },
-                      ...contasFinanceiras.map((c) => ({
-                        value: c.id,
-                        label: labelContaFinanceira(c),
-                      })),
+                      { value: "", label: "— selecione —" },
+                      ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
                     ]}
                   />
                 </Field>
-              )}
-              <Field
-                label="Centro de custo"
-                className={lancarAlvo.tipo === "credito" ? "sm:col-span-2" : undefined}
-              >
-                <Select
-                  value={lancarCentroId}
-                  onChange={setLancarCentroId}
-                  options={[
-                    { value: "", label: "— sem centro —" },
-                    ...centros.map((c) => ({ value: c.id, label: c.nome })),
-                  ]}
-                />
-              </Field>
 
-              <Field label="Observação" className="sm:col-span-2">
-                <textarea
-                  className="input min-h-[4rem] py-2 text-sm"
-                  rows={2}
-                  value={lancarObs}
-                  onChange={(e) => setLancarObs(e.target.value)}
-                  placeholder="Opcional"
+                <Field
+                  label={
+                    lancarAlvo.tipo === "credito" ? "Pagador / cliente" : "Favorecido / fornecedor"
+                  }
+                  required
+                  hint="Busque cliente ou fornecedor cadastrado, ou digite um nome livre."
+                  className="sm:col-span-2"
+                >
+                  <SearchableSelect
+                    value={lancarPessoa}
+                    onChange={applyParceiroLancar}
+                    allowFreeText
+                    placeholder="Buscar cliente ou fornecedor…"
+                    searchPlaceholder="Digite nome ou documento…"
+                    options={parceiroOptions}
+                  />
+                </Field>
+
+                <Field label="Tipo">
+                  <Select
+                    value={lancarTipoPessoa}
+                    onChange={(v) => {
+                      setLancarTipoPessoa(v as TipoPessoa);
+                      setLancarCnpjCpf("");
+                    }}
+                    options={[
+                      { value: "pj", label: "Pessoa jurídica (CNPJ)" },
+                      { value: "pf", label: "Pessoa física (CPF)" },
+                    ]}
+                  />
+                </Field>
+                <Field
+                  label={lancarTipoPessoa === "pj" ? "CNPJ" : "CPF"}
+                  hint="Opcional (informativo)."
+                >
+                  <input
+                    className="input h-9 uppercase"
+                    inputMode={lancarTipoPessoa === "pj" ? "text" : "numeric"}
+                    maxLength={18}
+                    value={lancarCnpjCpf}
+                    onChange={(e) => setLancarCnpjCpf(formatCpfCnpj(e.target.value))}
+                    placeholder={
+                      lancarTipoPessoa === "pj" ? "00.000.000/0000-00" : "000.000.000-00"
+                    }
+                  />
+                </Field>
+
+                <Field label="Valor (R$)">
+                  <input
+                    className="input h-9 bg-muted/40"
+                    readOnly
+                    value={Math.abs(lancarAlvo.valor).toFixed(2)}
+                  />
+                </Field>
+                <Field label="Status">
+                  <input
+                    className="input h-9 bg-muted/40"
+                    readOnly
+                    value={
+                      lancarParcelas > 1 ||
+                      (lancarRecorrencia && lancarRecorrenciaOcorrencias > 1)
+                        ? `1ª ${lancarAlvo.tipo === "credito" ? "recebida" : "paga"}; demais em aberto`
+                        : lancarAlvo.tipo === "credito"
+                          ? "Recebida"
+                          : "Paga"
+                    }
+                  />
+                </Field>
+
+                <Field label="Competência">
+                  <input
+                    className="input h-9 bg-muted/40"
+                    readOnly
+                    value={formatDate(lancarAlvo.data)}
+                  />
+                </Field>
+                <Field label="Vencimento">
+                  <input
+                    className="input h-9 bg-muted/40"
+                    readOnly
+                    value={formatDate(lancarAlvo.data)}
+                  />
+                </Field>
+
+                {lancarAlvo.tipo === "debito" && (
+                  <Field label="Conta / Cartão">
+                    <Select
+                      value={lancarContaFinId}
+                      onChange={setLancarContaFinId}
+                      options={[
+                        { value: "", label: "— sem conta —" },
+                        ...contasFinanceiras.map((c) => ({
+                          value: c.id,
+                          label: labelContaFinanceira(c),
+                        })),
+                      ]}
+                    />
+                  </Field>
+                )}
+                <Field
+                  label="Centro de custo"
+                  className={lancarAlvo.tipo === "credito" ? "sm:col-span-2" : undefined}
+                >
+                  <Select
+                    value={lancarCentroId}
+                    onChange={setLancarCentroId}
+                    options={[
+                      { value: "", label: "— sem centro —" },
+                      ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                    ]}
+                  />
+                </Field>
+
+                <Field label="Observação" className="sm:col-span-2">
+                  <textarea
+                    className="input min-h-[4rem] py-2 text-sm"
+                    rows={2}
+                    value={lancarObs}
+                    onChange={(e) => setLancarObs(e.target.value)}
+                    placeholder="Opcional"
+                  />
+                </Field>
+              </div>
+            )}
+
+            {lancarTab === "parcelas" && (
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  O valor do extrato ({formatBRL(Math.abs(lancarAlvo.valor))}) é o valor de cada
+                  parcela/ocorrência — não é dividido. A 1ª fica baixada; as demais entram em{" "}
+                  {lancarAlvo.tipo === "credito" ? "Contas a Receber" : "Contas a Pagar"} em aberto.
+                </p>
+                {lancarErro && lancarTab === "parcelas" && (
+                  <p className="text-xs text-destructive">{lancarErro}</p>
+                )}
+                <ParcelasRepeticaoFields
+                  parcelas={lancarParcelas}
+                  recorrencia={lancarRecorrencia}
+                  recorrenciaDias={lancarRecorrenciaDias}
+                  recorrenciaOcorrencias={lancarRecorrenciaOcorrencias}
+                  editing={false}
+                  onChange={(partial) => {
+                    if (partial.parcelas !== undefined) setLancarParcelas(partial.parcelas);
+                    if (partial.recorrencia !== undefined) setLancarRecorrencia(partial.recorrencia);
+                    if (partial.recorrenciaDias !== undefined) {
+                      setLancarRecorrenciaDias(partial.recorrenciaDias);
+                    }
+                    if (partial.recorrenciaOcorrencias !== undefined) {
+                      setLancarRecorrenciaOcorrencias(partial.recorrenciaOcorrencias);
+                    }
+                    setLancarErro("");
+                  }}
                 />
-              </Field>
-            </div>
+              </div>
+            )}
           </div>
         )}
       </Modal>
