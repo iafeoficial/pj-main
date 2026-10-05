@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SelectOption } from "@/components/ui/Select";
@@ -14,6 +15,23 @@ export interface SearchableSelectProps {
   id?: string;
   /** Se true, o texto digitado pode ser confirmado mesmo sem match na lista. */
   allowFreeText?: boolean;
+}
+
+type MenuPos = { top: number; left: number; width: number; maxHeight: number };
+
+function measureMenuPos(el: HTMLElement): MenuPos {
+  const r = el.getBoundingClientRect();
+  const gap = 4;
+  const spaceBelow = window.innerHeight - r.bottom - gap;
+  const spaceAbove = r.top - gap;
+  const preferUp = spaceBelow < 200 && spaceAbove > spaceBelow;
+  const maxHeight = Math.min(240, Math.max(120, preferUp ? spaceAbove : spaceBelow));
+  return {
+    top: preferUp ? Math.max(8, r.top - gap - maxHeight) : r.bottom + gap,
+    left: Math.max(8, Math.min(r.left, window.innerWidth - r.width - 8)),
+    width: r.width,
+    maxHeight,
+  };
 }
 
 function normalize(s: string): string {
@@ -43,6 +61,7 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
+  const [menuPos, setMenuPos] = useState<MenuPos | null>(null);
 
   const selected = options.find((o) => o.value === value);
   const displayValue = open
@@ -57,31 +76,56 @@ export function SearchableSelect({
     );
   }, [options, query]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        if (allowFreeText && query.trim() && !options.some((o) => o.value === value)) {
-          onChange(query.trim());
-        }
-        setQuery("");
+  const openMenu = useCallback(() => {
+    if (disabled) return;
+    const el = rootRef.current;
+    if (el) setMenuPos(measureMenuPos(el));
+    setHighlight(0);
+    const hasMatch = options.some((o) => o.value === value);
+    setQuery(allowFreeText && !hasMatch && value ? value : "");
+    setOpen(true);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [disabled, options, value, allowFreeText]);
+
+  const closeMenu = useCallback(
+    (commit = false) => {
+      if (commit && allowFreeText && query.trim() && !options.some((o) => o.value === value)) {
+        onChange(query.trim());
       }
+      setOpen(false);
+      setQuery("");
+      setMenuPos(null);
+    },
+    [allowFreeText, query, options, value, onChange]
+  );
+
+  const updateMenuPos = useCallback(() => {
+    const el = rootRef.current;
+    if (!el || !open) return;
+    setMenuPos(measureMenuPos(el));
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateMenuPos();
+    window.addEventListener("resize", updateMenuPos);
+    window.addEventListener("scroll", updateMenuPos, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPos);
+      window.removeEventListener("scroll", updateMenuPos, true);
     };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open, allowFreeText, query, options, value, onChange]);
+  }, [open, updateMenuPos, filtered.length]);
 
   useEffect(() => {
     if (!open) return;
-    setHighlight(0);
-    // Com texto livre sem match, mantém o valor atual no campo para editar/filtrar.
-    const hasMatch = options.some((o) => o.value === value);
-    setQuery(allowFreeText && !hasMatch && value ? value : "");
-    requestAnimationFrame(() => inputRef.current?.focus());
-    // Só reage à abertura do dropdown (não a cada mudança de value).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- open gate
-  }, [open]);
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || listRef.current?.contains(t)) return;
+      closeMenu(true);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open, closeMenu]);
 
   useEffect(() => {
     if (!open || !listRef.current) return;
@@ -94,6 +138,7 @@ export function SearchableSelect({
       onChange(opt.value);
       setOpen(false);
       setQuery("");
+      setMenuPos(null);
     },
     [onChange]
   );
@@ -108,6 +153,7 @@ export function SearchableSelect({
     onChange(match ? match.value : text);
     setOpen(false);
     setQuery("");
+    setMenuPos(null);
   };
 
   const moveHighlight = (delta: number) => {
@@ -119,11 +165,11 @@ export function SearchableSelect({
     if (disabled) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (!open) setOpen(true);
+      if (!open) openMenu();
       else moveHighlight(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (!open) setOpen(true);
+      if (!open) openMenu();
       else moveHighlight(-1);
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -134,10 +180,66 @@ export function SearchableSelect({
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      setOpen(false);
-      setQuery("");
+      closeMenu(false);
     }
   };
+
+  const listbox =
+    open && menuPos
+      ? createPortal(
+          <div
+            ref={listRef}
+            id={listboxId}
+            role="listbox"
+            aria-labelledby={fieldId}
+            style={{
+              position: "fixed",
+              top: menuPos.top,
+              left: menuPos.left,
+              width: menuPos.width,
+              maxHeight: menuPos.maxHeight,
+              zIndex: 200,
+            }}
+            className="overflow-y-auto rounded-lg border border-border bg-card p-1 text-sm shadow-lg"
+          >
+            {filtered.length === 0 ? (
+              <p className="px-2.5 py-2 text-xs text-muted-foreground">
+                {allowFreeText
+                  ? "Nenhum cadastro. Enter para usar o texto digitado."
+                  : "Nenhum resultado."}
+              </p>
+            ) : (
+              filtered.map((opt, i) => {
+                const isSelected = opt.value === value;
+                const isHighlighted = i === highlight;
+                return (
+                  <button
+                    key={opt.value === "" ? `__empty_${i}` : `${opt.value}_${i}`}
+                    type="button"
+                    role="option"
+                    data-index={i}
+                    aria-selected={isSelected}
+                    onMouseEnter={() => setHighlight(i)}
+                    onClick={() => selectOption(opt)}
+                    className={cn(
+                      "flex w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      isHighlighted && !isSelected && "bg-accent text-accent-foreground",
+                      isSelected && "bg-primary text-primary-foreground",
+                      !isHighlighted &&
+                        !isSelected &&
+                        "hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    <span className="truncate">{opt.label}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
@@ -160,11 +262,15 @@ export function SearchableSelect({
           autoComplete="off"
           placeholder={open ? searchPlaceholder : placeholder}
           value={displayValue}
-          onFocus={() => !disabled && setOpen(true)}
-          onClick={() => !disabled && setOpen(true)}
+          onFocus={() => openMenu()}
+          onClick={() => openMenu()}
           onChange={(e) => {
             setQuery(e.target.value);
-            setOpen(true);
+            if (!open) openMenu();
+            else {
+              const el = rootRef.current;
+              if (el) setMenuPos(measureMenuPos(el));
+            }
             setHighlight(0);
           }}
           onKeyDown={handleKeyDown}
@@ -175,7 +281,11 @@ export function SearchableSelect({
           tabIndex={-1}
           disabled={disabled}
           aria-label="Abrir lista"
-          onClick={() => !disabled && setOpen((o) => !o)}
+          onClick={() => {
+            if (disabled) return;
+            if (open) closeMenu(false);
+            else openMenu();
+          }}
           className="shrink-0 text-muted-foreground"
         >
           <ChevronDown
@@ -184,51 +294,7 @@ export function SearchableSelect({
           />
         </button>
       </div>
-
-      {open && (
-        <div
-          ref={listRef}
-          id={listboxId}
-          role="listbox"
-          aria-labelledby={fieldId}
-          className="absolute left-0 top-full z-[60] mt-1 max-h-48 w-full min-w-[8rem] overflow-y-auto rounded-lg border border-border bg-card p-1 text-sm shadow-lg sm:max-h-60"
-        >
-          {filtered.length === 0 ? (
-            <p className="px-2.5 py-2 text-xs text-muted-foreground">
-              {allowFreeText
-                ? "Nenhum cadastro. Enter para usar o texto digitado."
-                : "Nenhum resultado."}
-            </p>
-          ) : (
-            filtered.map((opt, i) => {
-              const isSelected = opt.value === value;
-              const isHighlighted = i === highlight;
-              return (
-                <button
-                  key={opt.value === "" ? `__empty_${i}` : `${opt.value}_${i}`}
-                  type="button"
-                  role="option"
-                  data-index={i}
-                  aria-selected={isSelected}
-                  onMouseEnter={() => setHighlight(i)}
-                  onClick={() => selectOption(opt)}
-                  className={cn(
-                    "flex w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isHighlighted && !isSelected && "bg-accent text-accent-foreground",
-                    isSelected && "bg-primary text-primary-foreground",
-                    !isHighlighted &&
-                      !isSelected &&
-                      "hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <span className="truncate">{opt.label}</span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      )}
+      {listbox}
     </div>
   );
 }

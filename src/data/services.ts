@@ -213,7 +213,7 @@ export const contaFinanceiraService = {
   },
   async listAtivas(empresaId: string): Promise<ContaFinanceira[]> {
     return (await contaFinanceiraTable.list(empresaId))
-      .filter((c) => c.ativo)
+      .filter((c) => c.ativo !== false)
       .sort((a, b) => a.nome.localeCompare(b.nome));
   },
   async create(empresaId: string, data: ContaFinanceiraInput) {
@@ -514,8 +514,19 @@ export const contaPagarService = {
 // ---------------------------------------------------------------------------
 type ContaReceberInput = Omit<
   ContaReceber,
-  "id" | "createdAt" | "updatedAt" | "empresaId" | "createdBy" | "valorRecebido" | "dataRecebimento"
-> & { valorRecebido?: number; dataRecebimento?: string | null };
+  | "id"
+  | "createdAt"
+  | "updatedAt"
+  | "empresaId"
+  | "createdBy"
+  | "valorRecebido"
+  | "dataRecebimento"
+  | "contaFinanceiraId"
+> & {
+  valorRecebido?: number;
+  dataRecebimento?: string | null;
+  contaFinanceiraId?: string | null;
+};
 
 export const contaReceberService = {
   async list(empresaId: string): Promise<ContaReceber[]> {
@@ -530,6 +541,7 @@ export const contaReceberService = {
   async create(empresaId: string, data: ContaReceberInput) {
     const c = await contaReceberTable.create(empresaId, {
       ...data,
+      contaFinanceiraId: data.contaFinanceiraId ?? null,
       valorRecebido: data.valorRecebido ?? 0,
       dataRecebimento: data.dataRecebimento ?? null,
       createdBy: getCurrentUser(),

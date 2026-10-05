@@ -163,6 +163,7 @@ export interface ContaReceber extends OwnedEntity {
   cliente: string;
   categoriaId: string | null;
   centroCustoId: string | null;
+  contaFinanceiraId: string | null;
   valor: number;
   valorRecebido: number;
   dataCompetencia: string;

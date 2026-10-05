@@ -93,11 +93,14 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as CentroCusto[]
   );
-  const { data: contasFinanceiras } = useAsyncData(
+  const { data: contasFinanceiras, error: contasFinErro } = useAsyncData(
     () => contaFinanceiraService.listAtivas(empresaId),
     [empresaId, version],
     [] as ContaFinanceira[]
   );
+  /** Lista fresca ao abrir o modal Lançar (não depende só do cache da página). */
+  const [contasLancar, setContasLancar] = useState<ContaFinanceira[]>([]);
+  const contasParaSelect = contasLancar.length > 0 ? contasLancar : contasFinanceiras;
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
 
   type ParceiroOpt = {
@@ -316,7 +319,7 @@ function Inner({ empresaId }: { empresaId: string }) {
     }
   }
 
-  function abrirLancar(t: TransacaoBancaria) {
+  async function abrirLancar(t: TransacaoBancaria) {
     const catId = categoriaSugerida(regras, t.tipo, t.descricao) ?? "";
     setLancarAlvo(t);
     setLancarTab("dados");
@@ -339,6 +342,13 @@ function Inner({ empresaId }: { empresaId: string }) {
           p.nome.toLowerCase().includes(t.descricao.toLowerCase().slice(0, 8)))
     );
     if (match) applyParceiroLancar(match.nome);
+    try {
+      const contas = await contaFinanceiraService.listAtivas(empresaId);
+      setContasLancar(contas);
+    } catch (e) {
+      setContasLancar([]);
+      notify((e as Error).message || "Falha ao carregar contas.", "error");
+    }
   }
 
   async function confirmarLancar() {
@@ -371,7 +381,7 @@ function Inner({ empresaId }: { empresaId: string }) {
         pessoa: lancarPessoa.trim(),
         categoriaId: lancarCategoriaId,
         centroCustoId: lancarCentroId || null,
-        contaFinanceiraId: lancarAlvo.tipo === "debito" ? lancarContaFinId || null : null,
+        contaFinanceiraId: lancarContaFinId || null,
         observacao: obsParts.join(" · ") || undefined,
         parcelas: lancarParcelas,
         recorrencia: lancarRecorrencia,
@@ -967,25 +977,31 @@ function Inner({ empresaId }: { empresaId: string }) {
                   />
                 </Field>
 
-                {lancarAlvo.tipo === "debito" && (
-                  <Field label="Conta / Cartão">
-                    <Select
-                      value={lancarContaFinId}
-                      onChange={setLancarContaFinId}
-                      options={[
-                        { value: "", label: "— sem conta —" },
-                        ...contasFinanceiras.map((c) => ({
-                          value: c.id,
-                          label: labelContaFinanceira(c),
-                        })),
-                      ]}
-                    />
-                  </Field>
-                )}
                 <Field
-                  label="Centro de custo"
-                  className={lancarAlvo.tipo === "credito" ? "sm:col-span-2" : undefined}
+                  label="Conta / Cartão"
+                  hint={
+                    contasFinErro
+                      ? `Erro ao carregar contas: ${contasFinErro}`
+                      : contasParaSelect.length === 0
+                        ? "Nenhuma conta ativa nesta empresa. Cadastre em Contas / Cartões."
+                        : lancarAlvo.tipo === "credito"
+                          ? "Conta em que o valor entrou."
+                          : "Conta/cartão de onde saiu o pagamento."
+                  }
                 >
+                  <Select
+                    value={lancarContaFinId}
+                    onChange={setLancarContaFinId}
+                    options={[
+                      { value: "", label: "— sem conta —" },
+                      ...contasParaSelect.map((c) => ({
+                        value: c.id,
+                        label: labelContaFinanceira(c),
+                      })),
+                    ]}
+                  />
+                </Field>
+                <Field label="Centro de custo">
                   <Select
                     value={lancarCentroId}
                     onChange={setLancarCentroId}

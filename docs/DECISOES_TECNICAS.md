@@ -177,6 +177,14 @@ já emite letras e a máscara só-dígitos quebrava o cadastro.
 **Implementação:** `ContasModule` (lista unificada + campos PF/PJ); `masks.formatCpfCnpj`;
 `ParceiroForm` / `EmpresasPage` com `inputMode=text` e uppercase.
 
+## ADR-019 — Conta financeira também em Contas a Receber
+**Decisão:** coluna `contas_receber.conta_financeira_id` (FK opcional), espelhando
+`contas_pagar`. UI em Contas a Receber e no modal Lançar (OFX) para crédito e débito.
+**Motivo:** no recebimento é preciso registrar em qual conta o valor entrou; no pagamento,
+de onde saiu.
+**Implementação:** migration `0022_contas_receber_conta_financeira.sql`; tipo `ContaReceber`;
+`ContasReceberPage` com `usaContaFinanceira`; `lancarDeTransacao` grava em ambos os lados.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.
