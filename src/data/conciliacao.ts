@@ -3,6 +3,7 @@ import type {
   ConciliacaoStatus,
   ContaPagar,
   ContaReceber,
+  ExtratoBancario,
   RecorrenciaTipo,
   RegraConciliacao,
   TransacaoBancaria,
@@ -39,6 +40,42 @@ export interface ImportResumo {
 export const conciliacaoService = {
   listExtratos: (empresaId: string) =>
     extratoTable.list(empresaId, { column: "created_at", ascending: false }),
+
+  async updateExtrato(
+    empresaId: string,
+    id: string,
+    data: Partial<Pick<ExtratoBancario, "banco" | "conta" | "dataInicio" | "dataFim" | "arquivoNome">>
+  ) {
+    const e = await extratoTable.update(empresaId, id, data);
+    await logAudit({
+      empresaId,
+      entidade: "ExtratoBancario",
+      entidadeId: id,
+      acao: "alteracao",
+      descricao: `Extrato bancário alterado (${e.banco || "—"} / ${e.conta || "—"}).`,
+    });
+    return e;
+  },
+
+  /**
+   * Remove o extrato e, por cascade, todas as transações vinculadas.
+   * Títulos em Contas a Pagar/Receber não são apagados.
+   */
+  async removeExtrato(empresaId: string, id: string) {
+    const txs = (await transacaoTable.list(empresaId)).filter((t) => t.extratoId === id);
+    const conciliadas = txs.filter((t) => t.statusConciliacao === "conciliada").length;
+    await extratoTable.remove(empresaId, id);
+    await logAudit({
+      empresaId,
+      entidade: "ExtratoBancario",
+      entidadeId: id,
+      acao: "exclusao",
+      descricao: `Extrato excluído (${txs.length} transação(ões)${
+        conciliadas ? `, ${conciliadas} conciliada(s)` : ""
+      }).`,
+    });
+    return { total: txs.length, conciliadas };
+  },
 
   listTransacoes: (empresaId: string) =>
     transacaoTable.list(empresaId, { column: "data", ascending: false }),

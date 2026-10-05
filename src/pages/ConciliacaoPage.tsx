@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle } from "lucide-react";
+import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2 } from "lucide-react";
 import type {
   Categoria,
   CentroCusto,
@@ -31,7 +31,9 @@ import { canWrite } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Field } from "@/components/ui/Field";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Select } from "@/components/ui/Select";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ParcelasRepeticaoFields } from "@/features/contas/ContasPagarExtras";
@@ -175,11 +177,36 @@ function Inner({ empresaId }: { empresaId: string }) {
 
   const extratoResumo = useMemo(() => {
     const counts = new Map<string, number>();
+    const conciliadasMap = new Map<string, number>();
     for (const t of transacoes) {
-      if (t.extratoId) counts.set(t.extratoId, (counts.get(t.extratoId) ?? 0) + 1);
+      if (!t.extratoId) continue;
+      counts.set(t.extratoId, (counts.get(t.extratoId) ?? 0) + 1);
+      if (t.statusConciliacao === "conciliada") {
+        conciliadasMap.set(t.extratoId, (conciliadasMap.get(t.extratoId) ?? 0) + 1);
+      }
     }
-    return extratos.map((e) => ({ ...e, qtdTransacoes: counts.get(e.id) ?? 0 }));
+    return extratos.map((e) => ({
+      ...e,
+      qtdTransacoes: counts.get(e.id) ?? 0,
+      qtdConciliadas: conciliadasMap.get(e.id) ?? 0,
+    }));
   }, [extratos, transacoes]);
+
+  const [editExtrato, setEditExtrato] = useState<ExtratoBancario | null>(null);
+  const [editBanco, setEditBanco] = useState("");
+  const [editConta, setEditConta] = useState("");
+  const [editInicio, setEditInicio] = useState("");
+  const [editFim, setEditFim] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const [toDeleteExtrato, setToDeleteExtrato] = useState<{
+    id: string;
+    banco: string;
+    conta: string;
+    qtdTransacoes: number;
+    qtdConciliadas: number;
+  } | null>(null);
+  const [deletingExtrato, setDeletingExtrato] = useState(false);
 
   const filtradas = useMemo(
     () => (filtro === "todas" ? transacoes : transacoes.filter((t) => t.statusConciliacao === filtro)),
@@ -218,6 +245,53 @@ function Inner({ empresaId }: { empresaId: string }) {
       notify((err as Error).message || "Falha ao ler o arquivo OFX.", "error");
     } finally {
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  function openEditExtrato(e: ExtratoBancario) {
+    setEditExtrato(e);
+    setEditBanco(e.banco || "");
+    setEditConta(e.conta || "");
+    setEditInicio(e.dataInicio || "");
+    setEditFim(e.dataFim || "");
+  }
+
+  async function salvarEditExtrato() {
+    if (!editExtrato) return;
+    setEditSaving(true);
+    try {
+      await conciliacaoService.updateExtrato(empresaId, editExtrato.id, {
+        banco: editBanco.trim(),
+        conta: editConta.trim(),
+        dataInicio: editInicio || null,
+        dataFim: editFim || null,
+      });
+      bumpData();
+      notify("Extrato atualizado.");
+      setEditExtrato(null);
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function confirmDeleteExtrato() {
+    if (!toDeleteExtrato) return;
+    setDeletingExtrato(true);
+    try {
+      const res = await conciliacaoService.removeExtrato(empresaId, toDeleteExtrato.id);
+      bumpData();
+      notify(
+        res.conciliadas > 0
+          ? `Extrato excluído (${res.total} transações, ${res.conciliadas} conciliadas).`
+          : `Extrato excluído (${res.total} transações).`
+      );
+      setToDeleteExtrato(null);
+    } catch (err) {
+      notify((err as Error).message, "error");
+    } finally {
+      setDeletingExtrato(false);
     }
   }
 
@@ -455,6 +529,9 @@ function Inner({ empresaId }: { empresaId: string }) {
                   <th className="px-4 py-2.5 font-medium">Período</th>
                   <th className="px-4 py-2.5 text-right font-medium">Transações</th>
                   <th className="px-4 py-2.5 font-medium">Importado em</th>
+                  {!readOnly && (
+                    <th className="px-4 py-2.5 text-right font-medium">Ações</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -469,8 +546,45 @@ function Inner({ empresaId }: { empresaId: string }) {
                         ? `${formatDate(e.dataInicio)} — ${formatDate(e.dataFim)}`
                         : "—"}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{e.qtdTransacoes}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      {e.qtdTransacoes}
+                      {e.qtdConciliadas > 0 && (
+                        <div className="text-[11px] text-muted-foreground">
+                          {e.qtdConciliadas} conciliada{e.qtdConciliadas > 1 ? "s" : ""}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-3">{formatDate(e.createdAt.slice(0, 10))}</td>
+                    {!readOnly && (
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            title="Editar extrato"
+                            onClick={() => openEditExtrato(e)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm text-destructive"
+                            title="Excluir extrato"
+                            onClick={() =>
+                              setToDeleteExtrato({
+                                id: e.id,
+                                banco: e.banco || "—",
+                                conta: e.conta || "—",
+                                qtdTransacoes: e.qtdTransacoes,
+                                qtdConciliadas: e.qtdConciliadas,
+                              })
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -974,6 +1088,99 @@ function Inner({ empresaId }: { empresaId: string }) {
           </p>
         </div>
       </Modal>
+
+      <Modal
+        open={!!editExtrato}
+        title="Editar extrato importado"
+        onClose={() => !editSaving && setEditExtrato(null)}
+        width="max-w-lg"
+        footer={
+          <>
+            <button
+              className="btn-outline"
+              disabled={editSaving}
+              onClick={() => setEditExtrato(null)}
+            >
+              Cancelar
+            </button>
+            <button className="btn-primary" disabled={editSaving} onClick={salvarEditExtrato}>
+              {editSaving ? "Salvando…" : "Salvar"}
+            </button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Banco">
+            <input
+              className="input"
+              value={editBanco}
+              onChange={(e) => setEditBanco(e.target.value)}
+              placeholder="Código ou nome do banco"
+            />
+          </Field>
+          <Field label="Conta">
+            <input
+              className="input"
+              value={editConta}
+              onChange={(e) => setEditConta(e.target.value)}
+              placeholder="Agência / conta"
+            />
+          </Field>
+          <Field label="Início do período">
+            <DatePicker value={editInicio} onChange={setEditInicio} placeholder="Opcional" />
+          </Field>
+          <Field label="Fim do período">
+            <DatePicker value={editFim} onChange={setEditFim} placeholder="Opcional" />
+          </Field>
+        </div>
+      </Modal>
+
+      <ConfirmDialog
+        open={!!toDeleteExtrato}
+        title="Excluir extrato importado"
+        destructive
+        confirmLabel={deletingExtrato ? "Excluindo…" : "Excluir"}
+        onCancel={() => !deletingExtrato && setToDeleteExtrato(null)}
+        onConfirm={() => {
+          if (!deletingExtrato) void confirmDeleteExtrato();
+        }}
+        message={
+          toDeleteExtrato ? (
+            <div className="space-y-3">
+              <p>
+                Extrato <span className="font-medium text-foreground">{toDeleteExtrato.banco}</span>
+                {" / "}
+                <span className="font-medium text-foreground">{toDeleteExtrato.conta}</span>
+                {toDeleteExtrato.qtdTransacoes > 0
+                  ? ` · ${toDeleteExtrato.qtdTransacoes} transação(ões)`
+                  : null}
+                .
+              </p>
+              {toDeleteExtrato.qtdConciliadas > 0 ? (
+                <p>
+                  Há{" "}
+                  <span className="font-medium text-destructive">
+                    {toDeleteExtrato.qtdConciliadas} transação(ões) já conciliada(s)
+                  </span>
+                  . Ao confirmar,{" "}
+                  <span className="font-medium text-destructive">tudo deste extrato será excluído</span>{" "}
+                  (pendentes, conciliadas e ignoradas). Esta ação é irreversível.
+                </p>
+              ) : (
+                <p>
+                  Nenhuma linha foi conciliada ainda. O extrato importado e suas transações serão
+                  removidos. Esta ação é irreversível.
+                </p>
+              )}
+              <p className="text-xs">
+                Títulos já criados em Contas a Pagar/Receber não são apagados automaticamente.
+              </p>
+            </div>
+          ) : (
+            ""
+          )
+        }
+      />
     </>
   );
 }
