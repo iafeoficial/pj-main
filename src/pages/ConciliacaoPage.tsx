@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2 } from "lucide-react";
 import type {
   Categoria,
+  CategoriaGrupo,
   CentroCusto,
   Cliente,
   ContaFinanceira,
@@ -19,7 +20,12 @@ import {
   sugerirConciliacao,
   type Sugestao,
 } from "@/data/conciliacao";
-import { categoriaService, centroCustoService, contaFinanceiraService } from "@/data/services";
+import {
+  categoriaService,
+  categoriaGrupoService,
+  centroCustoService,
+  contaFinanceiraService,
+} from "@/data/services";
 import { clienteService, fornecedorService } from "@/data/cadastros";
 import { parseOFX } from "@/lib/ofx";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
@@ -78,6 +84,11 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as Categoria[]
   );
+  const { data: gruposCat } = useAsyncData(
+    () => categoriaGrupoService.list(empresaId),
+    [empresaId, version],
+    [] as CategoriaGrupo[]
+  );
   const { data: clientesAtivos } = useAsyncData(
     () => clienteService.listAtivos(empresaId),
     [empresaId, version],
@@ -100,8 +111,16 @@ function Inner({ empresaId }: { empresaId: string }) {
   );
   /** Lista fresca ao abrir o modal Lançar (não depende só do cache da página). */
   const [contasLancar, setContasLancar] = useState<ContaFinanceira[]>([]);
+  const [centrosLancar, setCentrosLancar] = useState<CentroCusto[]>([]);
+  const [categoriasLancarState, setCategoriasLancarState] = useState<Categoria[]>([]);
+  const [gruposLancar, setGruposLancar] = useState<CategoriaGrupo[]>([]);
   const contasParaSelect = contasLancar.length > 0 ? contasLancar : contasFinanceiras;
+  const centrosParaSelect = centrosLancar.length > 0 ? centrosLancar : centros;
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
+  const grupoCatMap = useMemo(() => {
+    const fonte = gruposLancar.length > 0 ? gruposLancar : gruposCat;
+    return new Map(fonte.map((g) => [g.id, g.nome]));
+  }, [gruposCat, gruposLancar]);
 
   type ParceiroOpt = {
     nome: string;
@@ -221,11 +240,24 @@ function Inner({ empresaId }: { empresaId: string }) {
     [transacoes]
   );
 
+  const tipoCategoriaLancar = lancarAlvo?.tipo === "debito" ? "despesa" : "receita";
   const categoriasLancar = useMemo(() => {
     if (!lancarAlvo) return [] as Categoria[];
-    const tipo = lancarAlvo.tipo === "debito" ? "despesa" : "receita";
-    return categorias.filter((c) => c.ativo && c.tipo === tipo);
-  }, [categorias, lancarAlvo]);
+    const fonte = categoriasLancarState.length > 0 ? categoriasLancarState : categorias;
+    return fonte.filter((c) => c.ativo !== false && c.tipo === tipoCategoriaLancar);
+  }, [categorias, categoriasLancarState, lancarAlvo, tipoCategoriaLancar]);
+
+  const categoriaLancarOptions = useMemo(
+    () =>
+      categoriasLancar.map((c) => ({
+        value: c.id,
+        label:
+          c.grupoId && grupoCatMap.get(c.grupoId)
+            ? `${grupoCatMap.get(c.grupoId)} › ${c.nome}`
+            : c.nome,
+      })),
+    [categoriasLancar, grupoCatMap]
+  );
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -343,11 +375,22 @@ function Inner({ empresaId }: { empresaId: string }) {
     );
     if (match) applyParceiroLancar(match.nome);
     try {
-      const contas = await contaFinanceiraService.listAtivas(empresaId);
+      const [contas, cats, centrosAtivos, grupos] = await Promise.all([
+        contaFinanceiraService.listAtivas(empresaId),
+        categoriaService.list(empresaId),
+        centroCustoService.listAtivos(empresaId),
+        categoriaGrupoService.list(empresaId),
+      ]);
       setContasLancar(contas);
+      setCategoriasLancarState(cats);
+      setCentrosLancar(centrosAtivos);
+      setGruposLancar(grupos);
     } catch (e) {
       setContasLancar([]);
-      notify((e as Error).message || "Falha ao carregar contas.", "error");
+      setCategoriasLancarState([]);
+      setCentrosLancar([]);
+      setGruposLancar([]);
+      notify((e as Error).message || "Falha ao carregar contas/categorias/centros.", "error");
     }
   }
 
@@ -878,6 +921,11 @@ function Inner({ empresaId }: { empresaId: string }) {
                   label="Categoria"
                   required
                   error={lancarErro || undefined}
+                  hint={
+                    categoriasLancar.length === 0
+                      ? `Nenhuma categoria-folha de ${tipoCategoriaLancar} ativa. Os itens em “Grupos (DRE)” não entram no lançamento — cadastre uma categoria do tipo ${tipoCategoriaLancar}.`
+                      : `Categorias-folha de ${tipoCategoriaLancar} (não grupos DRE).`
+                  }
                   className="sm:col-span-2"
                 >
                   <Select
@@ -888,7 +936,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                     }}
                     options={[
                       { value: "", label: "— selecione —" },
-                      ...categoriasLancar.map((c) => ({ value: c.id, label: c.nome })),
+                      ...categoriaLancarOptions,
                     ]}
                   />
                 </Field>
@@ -1001,13 +1049,20 @@ function Inner({ empresaId }: { empresaId: string }) {
                     ]}
                   />
                 </Field>
-                <Field label="Centro de custo">
+                <Field
+                  label="Centro de custo"
+                  hint={
+                    centrosParaSelect.length === 0
+                      ? "Nenhum centro ativo nesta empresa. Cadastre em Centros de Custo."
+                      : undefined
+                  }
+                >
                   <Select
                     value={lancarCentroId}
                     onChange={setLancarCentroId}
                     options={[
                       { value: "", label: "— sem centro —" },
-                      ...centros.map((c) => ({ value: c.id, label: c.nome })),
+                      ...centrosParaSelect.map((c) => ({ value: c.id, label: c.nome })),
                     ]}
                   />
                 </Field>

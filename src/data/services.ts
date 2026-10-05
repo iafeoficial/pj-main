@@ -170,7 +170,7 @@ export const centroCustoService = {
   },
   async listAtivos(empresaId: string): Promise<CentroCusto[]> {
     return (await centroCustoTable.list(empresaId))
-      .filter((c) => c.ativo)
+      .filter((c) => c.ativo !== false)
       .sort((a, b) => a.nome.localeCompare(b.nome));
   },
   async create(empresaId: string, data: { nome: string; codigo: string; ativo: boolean }) {
