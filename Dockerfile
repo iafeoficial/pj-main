@@ -15,11 +15,17 @@ ARG VITE_SUPABASE_ANON_KEY
 ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
 ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 
+# Coolify often injects NODE_ENV=production; that would skip devDependencies
+# (typescript, vite, …) and break `npm run build`. Force a full install here.
+ENV NODE_ENV=development
+ENV NODE_OPTIONS=--max-old-space-size=3072
+
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY . .
-RUN npm run build
+RUN echo "==> Typecheck" && npx tsc -b --pretty false \
+ && echo "==> Vite build" && npx vite build
 
 FROM nginx:alpine
 
