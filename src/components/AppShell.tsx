@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   ArrowDownCircle,
@@ -30,6 +30,9 @@ import {
   LogOut,
   Menu,
   X,
+  ChevronDown,
+  PanelLeftClose,
+  PanelLeft,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Users2 } from "lucide-react";
@@ -37,6 +40,7 @@ import { EmpresaSelector } from "./EmpresaSelector";
 import { useAuth } from "@/context/AuthContext";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { can, canWrite, PAPEL_LABEL, type Capability } from "@/lib/rbac";
+import { cn } from "@/lib/utils";
 
 interface NavItem {
   to: string;
@@ -115,6 +119,15 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
+function itemIsActive(to: string, pathname: string): boolean {
+  if (to === "/") return pathname === "/";
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
+
+function sectionHasActive(items: NavItem[], pathname: string): boolean {
+  return items.some((it) => itemIsActive(it.to, pathname));
+}
+
 function SidebarNav({
   sections,
   onNavigate,
@@ -122,35 +135,91 @@ function SidebarNav({
   sections: { title: string; items: NavItem[] }[];
   onNavigate?: () => void;
 }) {
+  const { pathname } = useLocation();
+  /** undefined = automático (abre se rota ativa); true/false = escolha do usuário */
+  const [manual, setManual] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setManual((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const s of sections) {
+        if (sectionHasActive(s.items, pathname) && next[s.title] === false) {
+          next[s.title] = true;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    // sections muda de referência a cada render; pathname basta para reabrir a seção ativa
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  function isOpen(title: string, items: NavItem[]): boolean {
+    if (manual[title] !== undefined) return manual[title];
+    return sectionHasActive(items, pathname);
+  }
+
+  function toggle(title: string, items: NavItem[]) {
+    setManual((prev) => ({
+      ...prev,
+      [title]: !isOpen(title, items),
+    }));
+  }
+
   return (
-    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-2">
-      {sections.map((section) => (
-        <div key={section.title}>
-          <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {section.title}
-          </p>
-          <div className="space-y-0.5">
-            {section.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/"}
-                onClick={onNavigate}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors ${
-                    isActive
-                      ? "bg-primary text-primary-foreground"
-                      : "text-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`
-                }
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </NavLink>
-            ))}
+    <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+      {sections.map((section) => {
+        const open = isOpen(section.title, section.items);
+        const active = sectionHasActive(section.items, pathname);
+        return (
+          <div key={section.title} className="pb-1">
+            <button
+              type="button"
+              onClick={() => toggle(section.title, section.items)}
+              aria-expanded={open}
+              className={cn(
+                "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide transition-colors",
+                active
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+            >
+              <span>{section.title}</span>
+              <ChevronDown
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0 transition-transform",
+                  open ? "rotate-0" : "-rotate-90"
+                )}
+                aria-hidden
+              />
+            </button>
+            {open && (
+              <div className="mt-0.5 space-y-0.5">
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === "/"}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      cn(
+                        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+                        isActive
+                          ? "bg-primary text-primary-foreground"
+                          : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                      )
+                    }
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </nav>
   );
 }
@@ -159,6 +228,22 @@ export function AppShell() {
   const { user, signOut } = useAuth();
   const { papel } = useEmpresa();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      return localStorage.getItem("pj-sidebar-open") !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("pj-sidebar-open", sidebarOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarOpen]);
+
   const sections = SECTIONS.map((s) => ({
     ...s,
     items: s.items.filter((it) => !papel || can(papel, it.cap)),
@@ -184,17 +269,28 @@ export function AppShell() {
   return (
     <div className="flex min-h-screen bg-background">
       {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
-        <div className="flex items-center gap-2 px-5 py-4">
-          <img src="/logo-iafe.png" alt="IAFE" className="h-9 w-9 object-contain" />
-          <div className="leading-tight">
-            <p className="text-sm font-semibold">Finanças PJ</p>
-            <p className="text-xs text-muted-foreground">Gestão financeira</p>
+      {sidebarOpen && (
+        <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
+          <div className="flex items-center gap-2 px-4 py-4">
+            <img src="/logo-iafe.png" alt="IAFE" className="h-9 w-9 object-contain" />
+            <div className="min-w-0 flex-1 leading-tight">
+              <p className="text-sm font-semibold">Finanças PJ</p>
+              <p className="text-xs text-muted-foreground">Gestão financeira</p>
+            </div>
+            <button
+              type="button"
+              className="btn-ghost btn-sm shrink-0"
+              title="Esconder menu"
+              aria-label="Esconder menu"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
           </div>
-        </div>
-        <SidebarNav sections={sections} />
-        {userFooter}
-      </aside>
+          <SidebarNav sections={sections} />
+          {userFooter}
+        </aside>
+      )}
 
       {/* Mobile drawer overlay */}
       {drawerOpen && (
@@ -219,11 +315,29 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-border bg-card/80 px-4 py-3 backdrop-blur md:px-8">
-          <div className="flex items-center gap-2 md:hidden">
-            <button className="btn-ghost btn-sm" onClick={() => setDrawerOpen(true)} aria-label="Abrir menu">
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost btn-sm md:hidden"
+              onClick={() => setDrawerOpen(true)}
+              aria-label="Abrir menu"
+            >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-sm font-semibold">Finanças PJ</span>
+            {!sidebarOpen && (
+              <button
+                type="button"
+                className="btn-ghost btn-sm hidden md:inline-flex"
+                title="Mostrar menu"
+                aria-label="Mostrar menu"
+                onClick={() => setSidebarOpen(true)}
+              >
+                <PanelLeft className="h-5 w-5" />
+              </button>
+            )}
+            <span className="text-sm font-semibold md:hidden">Finanças PJ</span>
+            {!sidebarOpen && (
+              <span className="hidden text-sm font-semibold md:inline">Finanças PJ</span>
+            )}
           </div>
           <div className="ml-auto">
             <EmpresaSelector />
