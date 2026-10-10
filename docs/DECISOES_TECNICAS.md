@@ -185,6 +185,18 @@ de onde saiu.
 **Implementação:** migration `0022_contas_receber_conta_financeira.sql`; tipo `ContaReceber`;
 `ContasReceberPage` com `usaContaFinanceira`; `lancarDeTransacao` grava em ambos os lados.
 
+## ADR-020 — Importação de clientes e fornecedores por planilha
+**Decisão:** a tela de Fornecedores e a de Clientes leem um `.xlsx` no formato do export
+IAFÉ (colunas Tags, CNPJ/CPF, Razão Social). A tag define o destino: Fornecedor, Cliente
+ou os dois cadastros. Linha sem tag não é gravada. Duplicata (mesmo CPF/CNPJ na empresa,
+ou o mesmo nome quando não há documento) é pulada. O preview confirma antes de gravar.
+**Motivo:** trazer o cadastro já existente sem redigitar, e usar esses registros nos
+mesmos fluxos de contas a pagar, a receber e conciliação.
+**Fora do cadastro:** banco, agência, conta, IE, inscrição municipal, crédito e demais
+colunas fiscais da planilha (ADR-012). A gravação usa `clienteService` / `fornecedorService`.
+**Implementação:** `src/lib/parceiroPlanilha.ts` (dependência `xlsx` só para ler o arquivo
+no browser); botão em `ParceiroCrud`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

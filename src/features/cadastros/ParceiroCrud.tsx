@@ -1,9 +1,16 @@
-import { useState } from "react";
-import { Pencil, Plus, Trash2, type LucideIcon } from "lucide-react";
+import { useRef, useState } from "react";
+import { Pencil, Plus, Trash2, Upload, type LucideIcon } from "lucide-react";
 import type { Cliente, Fornecedor } from "@/types/domain";
+import { clienteService, fornecedorService } from "@/data/cadastros";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
+import {
+  lerPlanilhaParceiros,
+  montarPreviewImportacao,
+  type DestinoParceiro,
+  type PreviewImportacaoParceiro,
+} from "@/lib/parceiroPlanilha";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
@@ -44,6 +51,38 @@ function cidadeUf(row: Parceiro) {
   return parts.length ? parts.join("/") : "—";
 }
 
+function rotuloDestino(destino: DestinoParceiro) {
+  return destino === "cliente" ? "Cliente" : "Fornecedor";
+}
+
+function ListaPreview({
+  titulo,
+  itens,
+  vazio,
+}: {
+  titulo: string;
+  itens: string[];
+  vazio?: string;
+}) {
+  if (itens.length === 0 && !vazio) return null;
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {titulo} ({itens.length})
+      </h3>
+      {itens.length === 0 ? (
+        <p className="mt-1 text-sm text-muted-foreground">{vazio}</p>
+      ) : (
+        <ul className="mt-1 max-h-36 space-y-0.5 overflow-y-auto text-sm">
+          {itens.map((item, i) => (
+            <li key={`${item}-${i}`}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig; empresaId: string }) {
   const { version, bumpData } = useEmpresa();
   const { notify } = useToast();
@@ -54,6 +93,10 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
   const [form, setForm] = useState<ParceiroFormData>(() => emptyParceiroForm());
   const [error, setError] = useState("");
   const [toDelete, setToDelete] = useState<Parceiro | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [preview, setPreview] = useState<PreviewImportacaoParceiro | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const draftKey = config.variant === "cliente" ? "clientes" : "fornecedores";
   const { clearDraft } = useFormDraft(
@@ -112,6 +155,48 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
     }
   }
 
+  async function onArquivo(file: File) {
+    try {
+      const linhas = await lerPlanilhaParceiros(await file.arrayBuffer());
+      const [clientes, fornecedores] = await Promise.all([
+        clienteService.list(empresaId),
+        fornecedorService.list(empresaId),
+      ]);
+      setPreview(montarPreviewImportacao(linhas, { clientes, fornecedores }));
+      setImportOpen(true);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  function fecharImportacao() {
+    if (importing) return;
+    setImportOpen(false);
+    setPreview(null);
+  }
+
+  async function confirmarImportacao() {
+    if (!preview || preview.criar.length === 0 || importing) return;
+    setImporting(true);
+    let gravados = 0;
+    try {
+      for (const item of preview.criar) {
+        const svc = item.destino === "cliente" ? clienteService : fornecedorService;
+        await svc.create(empresaId, item.payload);
+        gravados += 1;
+      }
+      bumpData();
+      notify(gravados === 1 ? "1 cadastro importado." : `${gravados} cadastros importados.`);
+      setImportOpen(false);
+      setPreview(null);
+    } catch (e) {
+      if (gravados > 0) bumpData();
+      notify((e as Error).message, "error");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function confirmDelete() {
     if (!toDelete) return;
     try {
@@ -130,9 +215,25 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
         title={config.titulo}
         subtitle={config.subtitulo}
         actions={
-          <button className="btn-primary" onClick={openCreate}>
-            <Plus className="h-4 w-4" /> Novo
-          </button>
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void onArquivo(file);
+              }}
+            />
+            <button className="btn-outline" onClick={() => fileRef.current?.click()}>
+              <Upload className="h-4 w-4" /> Importar planilha
+            </button>
+            <button className="btn-primary" onClick={openCreate}>
+              <Plus className="h-4 w-4" /> Novo
+            </button>
+          </>
         }
       />
 
@@ -140,11 +241,16 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
         <EmptyState
           icon={Icon}
           title={`Nenhum ${config.singular.toLowerCase()}`}
-          description="Cadastre o primeiro registro."
+          description="Cadastre o primeiro registro ou importe uma planilha."
           action={
-            <button className="btn-primary" onClick={openCreate}>
-              <Plus className="h-4 w-4" /> Novo
-            </button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <button className="btn-outline" onClick={() => fileRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Importar planilha
+              </button>
+              <button className="btn-primary" onClick={openCreate}>
+                <Plus className="h-4 w-4" /> Novo
+              </button>
+            </div>
           }
         />
       ) : (
@@ -216,6 +322,59 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
         }
       >
         <ParceiroForm variant={config.variant} value={form} onChange={setForm} error={error} />
+      </Modal>
+
+      <Modal
+        open={importOpen && !!preview}
+        title="Importar planilha"
+        width="max-w-2xl"
+        onClose={fecharImportacao}
+        footer={
+          <>
+            <button className="btn-outline" onClick={fecharImportacao} disabled={importing}>
+              Cancelar
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => void confirmarImportacao()}
+              disabled={importing || !preview || preview.criar.length === 0}
+            >
+              {importing ? "Importando…" : "Confirmar importação"}
+            </button>
+          </>
+        }
+      >
+        {preview && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Linhas com tag de fornecedor ou cliente entram no cadastro correspondente. Quem tiver
+              as duas tags é criado nos dois. Sem tag não é gravado. Quem já existir (mesmo
+              CPF/CNPJ, ou o mesmo nome quando não houver documento) é pulado.
+            </p>
+            <ListaPreview
+              titulo="Fornecedores a criar"
+              itens={preview.criar.filter((i) => i.destino === "fornecedor").map((i) => i.nome)}
+              vazio="Nenhum."
+            />
+            <ListaPreview
+              titulo="Clientes a criar"
+              itens={preview.criar.filter((i) => i.destino === "cliente").map((i) => i.nome)}
+              vazio="Nenhum."
+            />
+            <ListaPreview
+              titulo="Sem tag — não serão gravados"
+              itens={preview.semTag.map((i) => i.nome || `Linha ${i.linha}`)}
+            />
+            <ListaPreview
+              titulo="Já cadastrados — não serão duplicados"
+              itens={preview.duplicadas.map((i) => `${i.nome} (${rotuloDestino(i.destino)})`)}
+            />
+            <ListaPreview
+              titulo="Linhas inválidas"
+              itens={preview.invalidas.map((i) => `Linha ${i.linha}: ${i.motivo}`)}
+            />
+          </div>
+        )}
       </Modal>
 
       <ConfirmDialog
