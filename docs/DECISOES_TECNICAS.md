@@ -197,6 +197,18 @@ colunas fiscais da planilha (ADR-012). A gravação usa `clienteService` / `forn
 **Implementação:** `src/lib/parceiroPlanilha.ts` (dependência `xlsx` só para ler o arquivo
 no browser); botão em `ParceiroCrud`.
 
+## ADR-021 — Importação da movimentação da conta corrente
+**Decisão:** Contas a Pagar e Contas a Receber leem o `.xlsx` da IAFÉ com as colunas
+Situação, Data, Cliente ou Fornecedor, Conta Corrente, Grupo, Categoria, Valor (R$) e
+Observações. Valor negativo vira conta a pagar; positivo, conta a receber. Conta corrente,
+grupo, categoria e o nome do parceiro são criados se faltarem. O preview confirma antes de
+gravar. Não há coluna nova: situação vira `status` (texto original em `observacao`), data
+vira competência/vencimento (e baixa, se quitado), conta corrente vira `conta_financeira_id`.
+**Motivo:** receber o histórico do sistema antigo no mesmo lançamento já usado no dashboard,
+fluxo e conciliação, sem migration.
+**Implementação:** `src/lib/movimentacaoPlanilha.ts` e `src/data/importacaoFinanceira.ts`;
+botão em `ContasModule`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, CheckCircle2, Ban } from "lucide-react";
+import { Pencil, Plus, Trash2, CheckCircle2, Ban, Upload } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
   Categoria,
@@ -38,6 +38,8 @@ import { proximoVencimentoFatura } from "@/lib/fatura";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { totalImpostosRetidos } from "@/lib/contaPagarExtras";
 import { compraService, vendaService } from "@/data/operacao";
+import { confirmarMovimentacao, previewMovimentacao } from "@/data/importacaoFinanceira";
+import type { PreviewMovimentacao } from "@/lib/movimentacaoPlanilha";
 import { clienteService, fornecedorService } from "@/data/cadastros";
 import {
   getPerfilLancamento,
@@ -155,6 +157,34 @@ const EMPTY_FORM = (): ContaFormData => ({
   recorrenciaOcorrencias: 1,
 });
 
+function ListaMovimento({
+  titulo,
+  itens,
+  vazio,
+}: {
+  titulo: string;
+  itens: string[];
+  vazio?: string;
+}) {
+  if (itens.length === 0 && !vazio) return null;
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {titulo} ({itens.length})
+      </h3>
+      {itens.length === 0 ? (
+        <p className="mt-1 text-sm text-muted-foreground">{vazio}</p>
+      ) : (
+        <ul className="mt-1 max-h-36 space-y-0.5 overflow-y-auto text-sm">
+          {itens.map((item, i) => (
+            <li key={`${item}-${i}`}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function ContasModule({
   empresaId,
   config,
@@ -169,6 +199,10 @@ export function ContasModule({
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get("id");
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const fileMovRef = useRef<HTMLInputElement>(null);
+  const [movOpen, setMovOpen] = useState(false);
+  const [movPreview, setMovPreview] = useState<PreviewMovimentacao | null>(null);
+  const [movImporting, setMovImporting] = useState(false);
 
   // `version` é a chave de invalidação de cache após mutações de dados.
   const { data: contas } = useAsyncData(
@@ -712,6 +746,39 @@ export function ContasModule({
     }
   }
 
+  async function onPlanilhaMovimento(file: File) {
+    try {
+      const preview = await previewMovimentacao(empresaId, await file.arrayBuffer());
+      setMovPreview(preview);
+      setMovOpen(true);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
+  function fecharMovimentacao() {
+    if (movImporting) return;
+    setMovOpen(false);
+    setMovPreview(null);
+  }
+
+  async function confirmarPlanilhaMovimento() {
+    if (!movPreview || movPreview.criar.length === 0 || movImporting) return;
+    setMovImporting(true);
+    try {
+      const gravados = await confirmarMovimentacao(empresaId, movPreview.criar);
+      bumpData();
+      notify(gravados === 1 ? "1 lançamento importado." : `${gravados} lançamentos importados.`);
+      setMovOpen(false);
+      setMovPreview(null);
+    } catch (e) {
+      bumpData();
+      notify((e as Error).message, "error");
+    } finally {
+      setMovImporting(false);
+    }
+  }
+
   const STATUS_OPTS = ["todos", "aberta", "parcial", config.statusBaixado, "vencida", "rascunho", "cancelada"];
 
   return (
@@ -721,9 +788,25 @@ export function ContasModule({
         subtitle={config.subtitulo}
         actions={
           !readOnly ? (
-            <button className="btn-primary" onClick={openCreate}>
-              <Plus className="h-4 w-4" /> Novo lançamento
-            </button>
+            <>
+              <input
+                ref={fileMovRef}
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void onPlanilhaMovimento(file);
+                }}
+              />
+              <button className="btn-outline" onClick={() => fileMovRef.current?.click()}>
+                <Upload className="h-4 w-4" /> Importar planilha
+              </button>
+              <button className="btn-primary" onClick={openCreate}>
+                <Plus className="h-4 w-4" /> Novo lançamento
+              </button>
+            </>
           ) : undefined
         }
       />
@@ -775,12 +858,17 @@ export function ContasModule({
         <EmptyState
           icon={config.icon}
           title="Nenhum lançamento"
-          description="Crie um lançamento ou ajuste o filtro de status."
+          description="Crie um lançamento, importe a planilha ou ajuste o filtro de status."
           action={
             !readOnly ? (
-              <button className="btn-primary" onClick={openCreate}>
-                <Plus className="h-4 w-4" /> Novo lançamento
-              </button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button className="btn-outline" onClick={() => fileMovRef.current?.click()}>
+                  <Upload className="h-4 w-4" /> Importar planilha
+                </button>
+                <button className="btn-primary" onClick={openCreate}>
+                  <Plus className="h-4 w-4" /> Novo lançamento
+                </button>
+              </div>
             ) : undefined
           }
         />
@@ -1410,6 +1498,66 @@ export function ContasModule({
                 <HistoricoPagamentos items={baixaHistorico} />
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={movOpen && !!movPreview}
+        title="Importar movimentação"
+        width="max-w-2xl"
+        onClose={fecharMovimentacao}
+        footer={
+          <>
+            <button className="btn-outline" onClick={fecharMovimentacao} disabled={movImporting}>
+              Cancelar
+            </button>
+            <button
+              className="btn-primary"
+              onClick={() => void confirmarPlanilhaMovimento()}
+              disabled={movImporting || !movPreview || movPreview.criar.length === 0}
+            >
+              {movImporting ? "Importando…" : "Confirmar importação"}
+            </button>
+          </>
+        }
+      >
+        {movPreview && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Valor negativo vira conta a pagar e valor positivo vira conta a receber. Conta, grupo,
+              categoria e o nome do cliente ou fornecedor são criados se ainda não existirem. Nada é
+              gravado antes desta confirmação.
+            </p>
+            <ListaMovimento
+              titulo="Contas a pagar"
+              itens={movPreview.criar
+                .filter((i) => i.lado === "pagar")
+                .map((i) => `${i.pessoa} · ${formatBRL(i.valor)} · ${formatDate(i.data)}`)}
+              vazio="Nenhuma."
+            />
+            <ListaMovimento
+              titulo="Contas a receber"
+              itens={movPreview.criar
+                .filter((i) => i.lado === "receber")
+                .map((i) => `${i.pessoa} · ${formatBRL(i.valor)} · ${formatDate(i.data)}`)}
+              vazio="Nenhuma."
+            />
+            <ListaMovimento
+              titulo="Já lançados — não serão duplicados"
+              itens={movPreview.duplicadas.map(
+                (i) =>
+                  `${i.lado === "pagar" ? "Pagar" : "Receber"}: ${i.pessoa} · ${formatBRL(i.valor)} · ${formatDate(i.data)}`
+              )}
+            />
+            <ListaMovimento
+              titulo="Ignoradas"
+              itens={movPreview.ignoradas.map((i) => `Linha ${i.linha}: ${i.motivo}`)}
+            />
+            <ListaMovimento
+              titulo="Linhas inválidas"
+              itens={movPreview.invalidas.map((i) => `Linha ${i.linha}: ${i.motivo}`)}
+            />
           </div>
         )}
       </Modal>
