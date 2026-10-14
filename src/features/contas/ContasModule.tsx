@@ -350,6 +350,8 @@ export function ContasModule({
 
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
   const [busca, setBusca] = useState("");
+  const [inicio, setInicio] = useState("");
+  const [fim, setFim] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -402,9 +404,14 @@ export function ContasModule({
 
   const filtradas = useMemo(() => {
     const porStatus = filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus);
+    const porPeriodo = porStatus.filter((c) => {
+      if (inicio && c.dataVencimento < inicio) return false;
+      if (fim && c.dataVencimento > fim) return false;
+      return true;
+    });
     const q = busca.trim();
-    if (!q) return porStatus;
-    return porStatus.filter((c) => {
+    if (!q) return porPeriodo;
+    return porPeriodo.filter((c) => {
       const preferFornecedor = config.pessoaCadastro === "fornecedor";
       const listaPref = preferFornecedor ? fornecedores : clientes;
       const listaOutra = preferFornecedor ? clientes : fornecedores;
@@ -431,7 +438,7 @@ export function ContasModule({
         c.numeroNf,
       ]);
     });
-  }, [contas, filtroStatus, busca, catMap, contaFinMap, clientes, fornecedores, config.pessoaCadastro]);
+  }, [contas, filtroStatus, busca, inicio, fim, catMap, contaFinMap, clientes, fornecedores, config.pessoaCadastro]);
 
   const allFilteredSelected =
     filtradas.length > 0 && filtradas.every((c) => selectedIds.has(c.id));
@@ -930,8 +937,31 @@ export function ContasModule({
         </div>
       )}
 
+      <div className="card mb-3 flex flex-wrap items-end gap-4 p-4">
+        <Field label="Início">
+          <DatePicker value={inicio} onChange={setInicio} />
+        </Field>
+        <Field label="Fim">
+          <DatePicker value={fim} onChange={setFim} />
+        </Field>
+        <div className="min-w-[16rem] flex-1">
+          <BuscaCampo value={busca} onChange={setBusca} />
+        </div>
+        {(inicio || fim) && (
+          <button
+            type="button"
+            className="btn-ghost btn-sm"
+            onClick={() => {
+              setInicio("");
+              setFim("");
+            }}
+          >
+            Limpar período
+          </button>
+        )}
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        <BuscaCampo value={busca} onChange={setBusca} />
         {STATUS_OPTS.map((s) => (
           <button
             key={s}
@@ -969,7 +999,7 @@ export function ContasModule({
       </div>
 
       {filtradas.length === 0 ? (
-        busca.trim() ? (
+        busca.trim() || inicio || fim ? (
           <BuscaVazia />
         ) : (
         <EmptyState

@@ -1,5 +1,6 @@
 // Fase 5 — serviços de cadastros (fornecedores, clientes, vendedores), assíncronos.
 import type { Cliente, Fornecedor, Vendedor } from "@/types/domain";
+import { normalizeCNPJ } from "@/lib/utils";
 import { logAudit } from "./audit";
 import {
   clienteTable,
@@ -11,6 +12,28 @@ import {
   pedidoVendaTable,
   vendedorTable,
 } from "./repos";
+
+/** CPF (11) ou CNPJ (14), sem pontuação. Incompleto não serve de chave. */
+function chaveDocumento(cnpjCpf: string | null | undefined): string {
+  const alnum = normalizeCNPJ(cnpjCpf ?? "");
+  return alnum.length === 11 || alnum.length === 14 ? alnum : "";
+}
+
+async function exigirDocumentoLivre(
+  empresaId: string,
+  papel: "cliente" | "fornecedor",
+  cnpjCpf: string | null | undefined,
+  ignorarId?: string
+) {
+  const chave = chaveDocumento(cnpjCpf);
+  if (!chave) return;
+  const lista =
+    papel === "cliente" ? await clienteTable.list(empresaId) : await fornecedorTable.list(empresaId);
+  const outro = lista.find((p) => p.id !== ignorarId && chaveDocumento(p.cnpjCpf) === chave);
+  if (!outro) return;
+  const rotulo = papel === "cliente" ? "cliente" : "fornecedor";
+  throw new Error(`Já existe um ${rotulo} com este CPF/CNPJ: ${outro.nome}.`);
+}
 
 /** Liga títulos que ainda só têm o nome e copia o nome novo para contas, pedidos e CRM. */
 async function propagarFornecedor(empresaId: string, anterior: Fornecedor, atual: Fornecedor) {
@@ -64,11 +87,13 @@ export const fornecedorService = {
   listAtivos: async (empresaId: string) =>
     (await fornecedorTable.list(empresaId, { column: "nome" })).filter((f) => f.ativo),
   async create(empresaId: string, data: Omit<Fornecedor, "id" | "createdAt" | "updatedAt" | "empresaId">) {
+    await exigirDocumentoLivre(empresaId, "fornecedor", data.cnpjCpf);
     const f = await fornecedorTable.create(empresaId, data);
     await logAudit({ empresaId, entidade: "Fornecedor", entidadeId: f.id, acao: "inclusao", descricao: `Fornecedor "${f.nome}" criado.` });
     return f;
   },
   async update(empresaId: string, id: string, data: Partial<Fornecedor>) {
+    if (data.cnpjCpf !== undefined) await exigirDocumentoLivre(empresaId, "fornecedor", data.cnpjCpf, id);
     const anterior = await fornecedorTable.find(empresaId, id);
     const f = await fornecedorTable.update(empresaId, id, data);
     if (anterior) await propagarFornecedor(empresaId, anterior, f);
@@ -86,11 +111,13 @@ export const clienteService = {
   listAtivos: async (empresaId: string) =>
     (await clienteTable.list(empresaId, { column: "nome" })).filter((c) => c.ativo),
   async create(empresaId: string, data: Omit<Cliente, "id" | "createdAt" | "updatedAt" | "empresaId">) {
+    await exigirDocumentoLivre(empresaId, "cliente", data.cnpjCpf);
     const c = await clienteTable.create(empresaId, data);
     await logAudit({ empresaId, entidade: "Cliente", entidadeId: c.id, acao: "inclusao", descricao: `Cliente "${c.nome}" criado.` });
     return c;
   },
   async update(empresaId: string, id: string, data: Partial<Cliente>) {
+    if (data.cnpjCpf !== undefined) await exigirDocumentoLivre(empresaId, "cliente", data.cnpjCpf, id);
     const anterior = await clienteTable.find(empresaId, id);
     const c = await clienteTable.update(empresaId, id, data);
     if (anterior) await propagarCliente(empresaId, anterior, c);

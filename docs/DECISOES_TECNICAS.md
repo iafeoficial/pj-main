@@ -233,6 +233,15 @@ nas contas já lançadas, sem duplicar documento e telefone em cada título.
 `clienteService.update` e `fornecedorService.update` em `src/data/cadastros.ts`;
 página `/parceiros`.
 
+## ADR-024 — CPF/CNPJ único no cadastro do parceiro
+**Decisão:** em cada empresa, um CPF (11) ou CNPJ (14) só pode existir uma vez em
+`clientes` e uma vez em `fornecedores`. A comparação ignora pontuação. Documento
+vazio ou incompleto não entra na regra. O `id` continua sendo o uuid: o documento
+pode ser corrigido, e a mesma pessoa pode ser cliente e fornecedor.
+**Motivo:** gravar a Denise de novo, com o mesmo CPF, não pode criar outro cadastro.
+**Implementação:** migration `0025_documento_unico_parceiro.sql`;
+`exigirDocumentoLivre` em `src/data/cadastros.ts`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.
