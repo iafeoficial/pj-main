@@ -138,20 +138,24 @@ export const conciliacaoService = {
 
   async desfazer(empresaId: string, id: string) {
     const t = await transacaoTable.find(empresaId, id);
-    if (t?.transferenciaId) {
+    if (!t) throw new Error("Transação não encontrada.");
+    if (t.transferenciaId) {
       try {
         await transferenciaService.remove(empresaId, t.transferenciaId);
       } catch {
         // A transferência já pode ter sido excluída na página de transferências.
       }
     }
+    const valor = Math.abs(t.valor);
+    if (t.contaPagarId) await contaPagarService.estornarPagamento(empresaId, t.contaPagarId, valor);
+    if (t.contaReceberId) await contaReceberService.estornarRecebimento(empresaId, t.contaReceberId, valor);
     await transacaoTable.update(empresaId, id, {
       statusConciliacao: "pendente",
       contaPagarId: null,
       contaReceberId: null,
       transferenciaId: null,
     });
-    await logAudit({ empresaId, entidade: "TransacaoBancaria", entidadeId: id, acao: "alteracao", descricao: "Conciliação desfeita." });
+    await logAudit({ empresaId, entidade: "TransacaoBancaria", entidadeId: id, acao: "alteracao", descricao: "Conciliação desfeita. O título voltou a ficar em aberto." });
   },
 
   /**

@@ -149,9 +149,12 @@ helper `src/lib/contaFinanceira.ts`; formulário com seção dedicada de cartão
 uma linha do extrato como novo título: débito → Contas a Pagar, crédito → Contas a
 Receber, **já baixado** na data do banco. Exclusão do título (UI ou banco) reabre a
 transação OFX como `pendente` (service `reativarTransacoesPorTitulo` + triggers
-`BEFORE DELETE` em `contas_pagar` / `contas_receber`).
+`BEFORE DELETE` em `contas_pagar` / `contas_receber`). Desfazer a conciliação
+estorna a baixa: o título pago ou recebido volta a aberto e sai dos totais do
+dashboard.
 **Motivo:** o extrato sozinho não gerava lançamento; sem título prévio a fila ficava
 presa em Pendente. Apagar o título por engano não pode “sumir” com o movimento do OFX.
+Desfazer a linha do extrato sem reabrir o título deixava o valor pago no dashboard.
 **Implementação:** `conciliacaoService.lancarDeTransacao` / `lancarPendentes`;
 `src/data/transacaoVinculo.ts`; migration `0021_reativar_transacao_ao_apagar_titulo.sql`;
 UI em `ConciliacaoPage`.

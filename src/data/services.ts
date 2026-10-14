@@ -492,6 +492,31 @@ export const contaPagarService = {
     });
     return c;
   },
+  /** Desfaz uma baixa (conciliação desfeita): devolve o título a aberto se não restar pagamento. */
+  async estornarPagamento(empresaId: string, id: string, valor: number) {
+    const atual = await contaPagarTable.find(empresaId, id);
+    if (!atual || valor <= 0) return atual;
+    const valorPago = Math.max(0, Number(((atual.valorPago ?? 0) - valor).toFixed(2)));
+    const devido = valorDevido(atual);
+    const status = valorPago <= 0.001 ? "aberta" : valorPago >= devido - 0.001 ? "paga" : "parcial";
+    const c = await contaPagarTable.update(empresaId, id, {
+      valorPago,
+      dataPagamento: valorPago <= 0.001 ? null : atual.dataPagamento,
+      status,
+    });
+    const pagamentos = (await pagamentoContaTable.list(empresaId))
+      .filter((p) => p.contaPagarId === id && Math.abs(p.valor - valor) < 0.001)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (pagamentos[0]) await pagamentoContaTable.remove(empresaId, pagamentos[0].id);
+    await logAudit({
+      empresaId,
+      entidade: "ContaPagar",
+      entidadeId: id,
+      acao: "alteracao",
+      descricao: `Baixa de ${valor} desfeita. Título voltou para ${c.status}.`,
+    });
+    return c;
+  },
   async listPagamentos(empresaId: string, contaPagarId: string): Promise<PagamentoConta[]> {
     return (await pagamentoContaTable.list(empresaId))
       .filter((p) => p.contaPagarId === contaPagarId)
@@ -578,6 +603,26 @@ export const contaReceberService = {
       status: quitada ? "recebida" : "parcial",
     });
     await logAudit({ empresaId, entidade: "ContaReceber", entidadeId: id, acao: "baixa", descricao: `Recebimento de ${valor} registrado (${c.status}).` });
+    return c;
+  },
+  /** Desfaz um recebimento (conciliação desfeita): devolve o título a aberto se não restar valor. */
+  async estornarRecebimento(empresaId: string, id: string, valor: number) {
+    const atual = await contaReceberTable.find(empresaId, id);
+    if (!atual || valor <= 0) return atual;
+    const valorRecebido = Math.max(0, Number((atual.valorRecebido - valor).toFixed(2)));
+    const status = valorRecebido <= 0.001 ? "aberta" : valorRecebido >= atual.valor - 0.001 ? "recebida" : "parcial";
+    const c = await contaReceberTable.update(empresaId, id, {
+      valorRecebido,
+      dataRecebimento: valorRecebido <= 0.001 ? null : atual.dataRecebimento,
+      status,
+    });
+    await logAudit({
+      empresaId,
+      entidade: "ContaReceber",
+      entidadeId: id,
+      acao: "alteracao",
+      descricao: `Recebimento de ${valor} desfeito. Título voltou para ${c.status}.`,
+    });
     return c;
   },
   async cancelar(empresaId: string, id: string) {
