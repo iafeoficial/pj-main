@@ -39,20 +39,41 @@ function toIso(d: Date): string {
   return format(d, "yyyy-MM-dd");
 }
 
+function maskData(raw: string): string {
+  const digits = raw.replace(/\D/g, "").slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function parseBr(text: string): Date | null {
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(text)) return null;
+  const d = parse(text, "dd/MM/yyyy", new Date());
+  if (!isValid(d) || format(d, "dd/MM/yyyy") !== text) return null;
+  return d;
+}
+
 export function DatePicker({
   value,
   onChange,
   disabled = false,
   className,
-  placeholder = "Selecione a data",
+  placeholder = "dd/mm/aaaa",
   id,
 }: DatePickerProps) {
   const autoId = useId();
   const fieldId = id ?? autoId;
   const rootRef = useRef<HTMLDivElement>(null);
+  const focused = useRef(false);
   const [open, setOpen] = useState(false);
   const selected = parseIso(value);
+  const display = selected ? format(selected, "dd/MM/yyyy", { locale: ptBR }) : "";
+  const [text, setText] = useState(display);
   const [viewMonth, setViewMonth] = useState<Date>(() => selected ?? new Date());
+
+  useEffect(() => {
+    if (!focused.current) setText(display);
+  }, [display]);
 
   useEffect(() => {
     const parsed = parseIso(value);
@@ -73,11 +94,29 @@ export function DatePicker({
   const selectDate = useCallback(
     (d: Date) => {
       onChange(toIso(d));
+      setText(format(d, "dd/MM/yyyy"));
       setViewMonth(d);
       setOpen(false);
     },
     [onChange]
   );
+
+  function commit(raw: string) {
+    const masked = maskData(raw);
+    if (!masked) {
+      setText(display);
+      return;
+    }
+    const parsed = parseBr(masked);
+    if (!parsed) {
+      setText(display);
+      return;
+    }
+    const iso = toIso(parsed);
+    setText(format(parsed, "dd/MM/yyyy"));
+    setViewMonth(parsed);
+    if (iso !== value) onChange(iso);
+  }
 
   const monthStart = startOfMonth(viewMonth);
   const monthEnd = endOfMonth(viewMonth);
@@ -85,39 +124,58 @@ export function DatePicker({
     start: startOfWeek(monthStart, { locale: ptBR }),
     end: endOfWeek(monthEnd, { locale: ptBR }),
   });
-
-  const display = selected ? format(selected, "dd/MM/yyyy", { locale: ptBR }) : "";
   const monthLabel = format(viewMonth, "MMMM yyyy", { locale: ptBR });
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      setOpen((o) => !o);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    }
-  };
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
-      <button
-        type="button"
-        id={fieldId}
-        disabled={disabled}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={display || placeholder}
-        onClick={() => !disabled && setOpen((o) => !o)}
-        onKeyDown={handleKeyDown}
+      <div
         className={cn(
-          "input flex items-center justify-between gap-2 text-left",
-          !display && "text-muted-foreground"
+          "input flex items-center gap-1 pr-1",
+          disabled && "cursor-not-allowed opacity-50"
         )}
       >
-        <span className="truncate">{display || placeholder}</span>
-        <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-      </button>
+        <input
+          id={fieldId}
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          disabled={disabled}
+          placeholder={placeholder}
+          value={text}
+          aria-label={display || placeholder}
+          onChange={(e) => setText(maskData(e.target.value))}
+          onFocus={() => {
+            focused.current = true;
+          }}
+          onBlur={() => {
+            focused.current = false;
+            commit(text);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit(text);
+              setOpen(false);
+            } else if (e.key === "Escape") {
+              setText(display);
+              setOpen(false);
+            }
+          }}
+          className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label="Abrir calendário"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((o) => !o)}
+          className="btn-ghost h-7 w-7 shrink-0 p-0"
+        >
+          <Calendar className="h-4 w-4 text-muted-foreground" aria-hidden />
+        </button>
+      </div>
 
       {open && (
         <div
@@ -169,6 +227,7 @@ export function DatePicker({
                   role="gridcell"
                   aria-selected={selectedDay || undefined}
                   aria-current={today ? "date" : undefined}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => selectDate(day)}
                   className={cn(
                     "h-8 rounded-md text-sm transition-colors",
@@ -189,6 +248,7 @@ export function DatePicker({
             <button
               type="button"
               className="btn-ghost btn-sm h-7 w-full text-xs"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => selectDate(new Date())}
             >
               Hoje

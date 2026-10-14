@@ -1,10 +1,13 @@
 // Cálculos financeiros derivados (dashboard, fluxo de caixa e relatórios). Assíncronos (C3).
 import type { ContaPagar, ContaReceber } from "@/types/domain";
+import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { monthRange } from "@/lib/utils";
+import { transferenciaService } from "./transferencias";
 import {
   categoriaGrupoService,
   categoriaService,
   centroCustoService,
+  contaFinanceiraService,
   contaPagarService,
   contaReceberService,
 } from "./services";
@@ -123,6 +126,229 @@ export async function getFluxoCaixa(empresaId: string, mesesAntes = 2, mesesDepo
     b.saldoAcumulado = acc;
   }
   return buckets;
+}
+
+export interface PeriodoPadrao {
+  inicio: string;
+  fim: string;
+}
+
+/** Menor e maior data dos títulos que entram no resultado. Sem lançamento, o mês atual. */
+export async function getPeriodoPadrao(
+  empresaId: string,
+  campo: "competencia" | "vencimento"
+): Promise<PeriodoPadrao> {
+  const [pagarAll, receberAll] = await Promise.all([
+    contaPagarService.list(empresaId),
+    contaReceberService.list(empresaId),
+  ]);
+  const datas: string[] = [];
+  for (const c of [...pagarAll, ...receberAll]) {
+    if (!isAtiva(c.status) || !entraNoResultado(c)) continue;
+    const d = campo === "competencia" ? c.dataCompetencia : c.dataVencimento;
+    if (d) datas.push(d);
+  }
+  if (datas.length === 0) {
+    const mes = monthRange();
+    return { inicio: mes.start, fim: mes.end };
+  }
+  datas.sort();
+  return { inicio: datas[0], fim: datas[datas.length - 1] };
+}
+
+function mesesDoIntervalo(inicio: string, fim: string): { mes: string; label: string }[] {
+  if (!inicio || !fim || inicio > fim) return [];
+  const [y1, m1] = inicio.slice(0, 7).split("-").map(Number);
+  const [y2, m2] = fim.slice(0, 7).split("-").map(Number);
+  const out: { mes: string; label: string }[] = [];
+  let y = y1;
+  let m = m1;
+  while ((y < y2 || (y === y2 && m <= m2)) && out.length < 240) {
+    out.push({
+      mes: `${y}-${String(m).padStart(2, "0")}`,
+      label: `${MESES[m - 1]}/${String(y).slice(2)}`,
+    });
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
+function fecharSaldos(buckets: FluxoBucket[]): FluxoBucket[] {
+  let acc = 0;
+  for (const b of buckets) {
+    b.saldoMes = b.entradas - b.saidas;
+    acc += b.saldoMes;
+    b.saldoAcumulado = acc;
+  }
+  return buckets;
+}
+
+/** Fluxo mensal entre duas datas. Sem conta, ignora transferência. Com conta, mostra o movimento dela. */
+export async function getFluxoCaixaPeriodo(
+  empresaId: string,
+  inicio: string,
+  fim: string,
+  contaId?: string | null
+): Promise<FluxoBucket[]> {
+  const buckets: FluxoBucket[] = mesesDoIntervalo(inicio, fim).map((m) => ({
+    ...m,
+    entradas: 0,
+    saidas: 0,
+    saldoMes: 0,
+    saldoAcumulado: 0,
+  }));
+  if (buckets.length === 0) return buckets;
+
+  const [pagarAll, receberAll, transferencias] = await Promise.all([
+    contaPagarService.list(empresaId),
+    contaReceberService.list(empresaId),
+    contaId ? transferenciaService.list(empresaId) : Promise.resolve([]),
+  ]);
+  const idx = new Map(buckets.map((b, i) => [b.mes, i]));
+  const mesOf = (iso: string) => iso.slice(0, 7);
+  const noMes = (iso: string) => iso >= inicio && iso <= fim;
+
+  const pagar = pagarAll.filter((c) => isAtiva(c.status) && (!contaId || c.contaFinanceiraId === contaId));
+  const receber = receberAll.filter((c) => isAtiva(c.status) && (!contaId || c.contaFinanceiraId === contaId));
+
+  for (const c of receber) {
+    if (!contaId && !entraNoResultado(c)) continue;
+    if (!noMes(c.dataVencimento)) continue;
+    const i = idx.get(mesOf(c.dataVencimento));
+    if (i !== undefined) buckets[i].entradas += c.valor;
+  }
+  for (const c of pagar) {
+    if (!contaId && !entraNoResultado(c)) continue;
+    if (!noMes(c.dataVencimento)) continue;
+    const i = idx.get(mesOf(c.dataVencimento));
+    if (i !== undefined) buckets[i].saidas += c.valor;
+  }
+  if (contaId) {
+    for (const t of transferencias) {
+      if (!noMes(t.data)) continue;
+      const i = idx.get(mesOf(t.data));
+      if (i === undefined) continue;
+      if (t.contaDestinoId === contaId) buckets[i].entradas += t.valor;
+      if (t.contaOrigemId === contaId) buckets[i].saidas += t.valor;
+    }
+  }
+  return fecharSaldos(buckets);
+}
+
+export interface LancamentoFluxo {
+  id: string;
+  mes: string;
+  pessoa: string;
+  data: string;
+  valor: number;
+  tipo: "entrada" | "saida";
+  parceiroId: string | null;
+}
+
+/** Lançamentos que compõem o fluxo do período, na mesma regra do gráfico. */
+export async function listarLancamentosFluxo(
+  empresaId: string,
+  inicio: string,
+  fim: string,
+  contaId?: string | null
+): Promise<LancamentoFluxo[]> {
+  const [pagarAll, receberAll, transferencias] = await Promise.all([
+    contaPagarService.list(empresaId),
+    contaReceberService.list(empresaId),
+    contaId ? transferenciaService.list(empresaId) : Promise.resolve([]),
+  ]);
+  const noMes = (iso: string) => iso >= inicio && iso <= fim;
+  const linhas: LancamentoFluxo[] = [];
+
+  for (const c of receberAll) {
+    if (!isAtiva(c.status)) continue;
+    if (contaId ? c.contaFinanceiraId !== contaId : !entraNoResultado(c)) continue;
+    if (!noMes(c.dataVencimento)) continue;
+    linhas.push({
+      id: c.id,
+      mes: c.dataVencimento.slice(0, 7),
+      pessoa: c.cliente,
+      data: c.dataVencimento,
+      valor: c.valor,
+      tipo: "entrada",
+      parceiroId: c.clienteId,
+    });
+  }
+  for (const c of pagarAll) {
+    if (!isAtiva(c.status)) continue;
+    if (contaId ? c.contaFinanceiraId !== contaId : !entraNoResultado(c)) continue;
+    if (!noMes(c.dataVencimento)) continue;
+    linhas.push({
+      id: c.id,
+      mes: c.dataVencimento.slice(0, 7),
+      pessoa: c.fornecedor,
+      data: c.dataVencimento,
+      valor: c.valor,
+      tipo: "saida",
+      parceiroId: c.fornecedorId,
+    });
+  }
+  if (contaId) {
+    for (const t of transferencias) {
+      if (!noMes(t.data)) continue;
+      if (t.contaDestinoId !== contaId && t.contaOrigemId !== contaId) continue;
+      const entrada = t.contaDestinoId === contaId;
+      linhas.push({
+        id: t.id,
+        mes: t.data.slice(0, 7),
+        pessoa: "Transferência entre contas",
+        data: t.data,
+        valor: t.valor,
+        tipo: entrada ? "entrada" : "saida",
+        parceiroId: null,
+      });
+    }
+  }
+  return linhas.sort((a, b) => a.data.localeCompare(b.data) || a.pessoa.localeCompare(b.pessoa, "pt-BR"));
+}
+
+export interface SaldoContaLinha {
+  id: string;
+  nome: string;
+  saldo: number;
+}
+
+/** Saldo acumulado de cada conta: abertura + o que já entrou − o que já saiu. */
+export async function getSaldosContas(
+  empresaId: string
+): Promise<{ contas: SaldoContaLinha[]; total: number }> {
+  const [contas, pagarAll, receberAll, transferencias] = await Promise.all([
+    contaFinanceiraService.list(empresaId),
+    contaPagarService.list(empresaId),
+    contaReceberService.list(empresaId),
+    transferenciaService.list(empresaId),
+  ]);
+  const map = new Map<string, number>();
+  for (const c of contas) map.set(c.id, Number(c.saldoInicial) || 0);
+  const add = (id: string | null, valor: number) => {
+    if (!id || !map.has(id)) return;
+    map.set(id, (map.get(id) ?? 0) + valor);
+  };
+  for (const c of receberAll) {
+    if (!isAtiva(c.status)) continue;
+    add(c.contaFinanceiraId, c.valorRecebido);
+  }
+  for (const c of pagarAll) {
+    if (!isAtiva(c.status)) continue;
+    add(c.contaFinanceiraId, -c.valorPago);
+  }
+  for (const t of transferencias) {
+    add(t.contaDestinoId, t.valor);
+    add(t.contaOrigemId, -t.valor);
+  }
+  const linhas = contas
+    .map((c) => ({ id: c.id, nome: labelContaFinanceira(c), saldo: map.get(c.id) ?? 0 }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  return { contas: linhas, total: linhas.reduce((s, l) => s + l.saldo, 0) };
 }
 
 export interface GroupRow {

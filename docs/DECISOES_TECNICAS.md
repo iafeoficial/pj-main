@@ -221,6 +221,18 @@ A linha continua visível para desmarcar. Nada é apagado automaticamente.
 **Implementação:** migration `0023_transferencias_contas.sql`; página
 `/transferencias`; ação na lista de [`ContasModule`](src/features/contas/ContasModule.tsx).
 
+## ADR-023 — Parceiro ligado ao título
+**Decisão:** `contas_pagar.fornecedor_id` e `contas_receber.cliente_id` são opcionais
+e somem se o cadastro for excluído. CPF/CNPJ e telefone não são copiados para a conta:
+a lista lê o cadastro pelo id ou, enquanto não houver id, pelo nome. Ao editar o
+cadastro, o nome novo substitui o antigo nas contas que casaram e o id fica gravado.
+Vendas e CRM acompanham o `cliente_id`; compras acompanham o `fornecedor_id`.
+**Motivo:** mudar o nome, o documento ou o telefone no cadastro precisa aparecer
+nas contas já lançadas, sem duplicar documento e telefone em cada título.
+**Implementação:** migration `0024_parceiro_nos_titulos.sql`;
+`clienteService.update` e `fornecedorService.update` em `src/data/cadastros.ts`;
+página `/parceiros`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

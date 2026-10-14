@@ -26,6 +26,7 @@ const config: ContasConfig = {
       id: c.id,
       empresaId: c.empresaId,
       pessoa: c.fornecedor,
+      parceiroId: c.fornecedorId,
       categoriaId: c.categoriaId,
       centroCustoId: c.centroCustoId,
       contaFinanceiraId: c.contaFinanceiraId,
@@ -50,6 +51,7 @@ const config: ContasConfig = {
   create: (empresaId, input) =>
     contaPagarService.create(empresaId, {
       fornecedor: input.pessoa,
+      fornecedorId: input.parceiroId,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId,
@@ -73,6 +75,7 @@ const config: ContasConfig = {
   update: (empresaId, id, input) =>
     contaPagarService.update(empresaId, id, {
       fornecedor: input.pessoa,
+      fornecedorId: input.parceiroId,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId,

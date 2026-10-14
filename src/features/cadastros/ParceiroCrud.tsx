@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Pencil, Plus, Trash2, Upload, type LucideIcon } from "lucide-react";
 import type { Cliente, Fornecedor } from "@/types/domain";
 import { clienteService, fornecedorService } from "@/data/cadastros";
@@ -11,7 +11,9 @@ import {
   type DestinoParceiro,
   type PreviewImportacaoParceiro,
 } from "@/lib/parceiroPlanilha";
+import { combinaBusca } from "@/lib/busca";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { BuscaCampo, BuscaVazia } from "@/components/ui/BuscaCampo";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -83,10 +85,40 @@ function ListaPreview({
   );
 }
 
-export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig; empresaId: string }) {
+export function ParceiroCrud({
+  config,
+  empresaId,
+  embedded = false,
+  busca,
+}: {
+  config: ParceiroCrudConfig;
+  empresaId: string;
+  /** Sem o título da página: a aba Parceiros já mostra o cabeçalho. */
+  embedded?: boolean;
+  /** Quando a página já tem a lupa, ela manda o texto. Senão o próprio cadastro mostra o campo. */
+  busca?: string;
+}) {
   const { version, bumpData } = useEmpresa();
   const { notify } = useToast();
   const { data: rows } = useAsyncData(() => config.service.list(empresaId), [empresaId, version], [] as Parceiro[]);
+  const [buscaLocal, setBuscaLocal] = useState("");
+  const termo = busca ?? buscaLocal;
+  const visiveis = useMemo(
+    () =>
+      rows.filter((row) =>
+        combinaBusca(termo, [
+          row.nome,
+          row.nomeFantasia,
+          row.cnpjCpf,
+          row.telefone,
+          row.email,
+          row.contatoNome,
+          row.cidade,
+          row.uf,
+        ])
+      ),
+    [rows, termo]
+  );
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Parceiro | null>(null);
@@ -209,33 +241,41 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
     setToDelete(null);
   }
 
+  const acoes = (
+    <>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) void onArquivo(file);
+        }}
+      />
+      <button className="btn-outline" onClick={() => fileRef.current?.click()}>
+        <Upload className="h-4 w-4" /> Importar planilha
+      </button>
+      <button className="btn-primary" onClick={openCreate}>
+        <Plus className="h-4 w-4" /> Novo
+      </button>
+    </>
+  );
+
   return (
     <>
-      <PageHeader
-        title={config.titulo}
-        subtitle={config.subtitulo}
-        actions={
-          <>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void onArquivo(file);
-              }}
-            />
-            <button className="btn-outline" onClick={() => fileRef.current?.click()}>
-              <Upload className="h-4 w-4" /> Importar planilha
-            </button>
-            <button className="btn-primary" onClick={openCreate}>
-              <Plus className="h-4 w-4" /> Novo
-            </button>
-          </>
-        }
-      />
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap justify-end gap-2">{acoes}</div>
+      ) : (
+        <PageHeader title={config.titulo} subtitle={config.subtitulo} actions={acoes} />
+      )}
+
+      {busca === undefined && (
+        <div className="mb-4">
+          <BuscaCampo value={buscaLocal} onChange={setBuscaLocal} placeholder="Buscar por nome, CPF ou CNPJ" />
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <EmptyState
@@ -253,6 +293,8 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
             </div>
           }
         />
+      ) : visiveis.length === 0 ? (
+        <BuscaVazia />
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
@@ -268,7 +310,7 @@ export function ParceiroCrud({ config, empresaId }: { config: ParceiroCrudConfig
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.map((row) => (
+              {visiveis.map((row) => (
                 <tr key={row.id} className="hover:bg-muted/30">
                   <td className="px-4 py-3">
                     <div className="font-medium">{row.nome}</div>

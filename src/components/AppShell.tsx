@@ -19,9 +19,8 @@ import {
   FileCheck2,
   ShoppingBag,
   ShoppingCart,
-  Truck,
-  Users,
   UserCog,
+  Handshake,
   Package,
   Boxes,
   Target,
@@ -47,7 +46,14 @@ interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
-  cap: Capability;
+  /** Uma capacidade, ou qualquer uma da lista. */
+  cap: Capability | Capability[];
+}
+
+function itemVisible(papel: Parameters<typeof can>[0], cap: Capability | Capability[]): boolean {
+  if (!papel) return true;
+  const caps = Array.isArray(cap) ? cap : [cap];
+  return caps.some((c) => can(papel, c));
 }
 
 const SECTIONS: { title: string; items: NavItem[] }[] = [
@@ -89,7 +95,6 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/vendas", label: "Vendas", icon: ShoppingBag, cap: "vendas" },
       { to: "/crm", label: "CRM", icon: Target, cap: "vendas" },
-      { to: "/clientes", label: "Clientes", icon: Users, cap: "vendas" },
       { to: "/vendedores", label: "Vendedores", icon: UserCog, cap: "vendas" },
       { to: "/comissoes", label: "Comissões", icon: Percent, cap: "vendas" },
     ],
@@ -98,7 +103,12 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: "Compras",
     items: [
       { to: "/compras", label: "Compras", icon: ShoppingCart, cap: "compras" },
-      { to: "/fornecedores", label: "Fornecedores", icon: Truck, cap: "compras" },
+    ],
+  },
+  {
+    title: "Parceiros",
+    items: [
+      { to: "/parceiros", label: "Parceiros", icon: Handshake, cap: ["vendas", "compras"] },
     ],
   },
   {
@@ -248,7 +258,7 @@ export function AppShell() {
 
   const sections = SECTIONS.map((s) => ({
     ...s,
-    items: s.items.filter((it) => !papel || can(papel, it.cap)),
+    items: s.items.filter((it) => itemVisible(papel, it.cap)),
   })).filter((s) => s.items.length > 0);
   const readOnly = papel != null && !canWrite(papel);
 

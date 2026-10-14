@@ -20,9 +20,11 @@ import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
 import { formatBRL, formatDate, isValidCNPJ, isValidCPF, normalizeCNPJ, today } from "@/lib/utils";
+import { combinaBusca, partesData, partesValor } from "@/lib/busca";
 import { formatCpfCnpj } from "@/lib/masks";
 import { emptyParceiroForm, parceiroToPayload } from "@/features/cadastros/ParceiroForm";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { BuscaCampo, BuscaVazia } from "@/components/ui/BuscaCampo";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Modal } from "@/components/ui/Modal";
@@ -85,6 +87,8 @@ export interface ContaLike {
   observacao: string;
   /** Fora dos totais: movimentação entre contas da mesma empresa. */
   transferencia?: boolean;
+  /** Id do cliente ou do fornecedor, quando o lançamento está ligado ao cadastro. */
+  parceiroId?: string | null;
 }
 
 export interface ContasConfig {
@@ -118,6 +122,7 @@ export interface ContasConfig {
 
 export interface ContaFormData {
   pessoa: string;
+  parceiroId: string | null;
   categoriaId: string | null;
   centroCustoId: string | null;
   contaFinanceiraId: string | null;
@@ -142,6 +147,7 @@ type FormTab = "dados" | "impostos" | "parcelas" | "historico";
 
 const EMPTY_FORM = (): ContaFormData => ({
   pessoa: "",
+  parceiroId: null,
   categoriaId: null,
   centroCustoId: null,
   contaFinanceiraId: null,
@@ -243,28 +249,32 @@ export function ContasModule({
   );
   const { data: compras } = useAsyncData(() => compraService.list(empresaId), [empresaId, version], []);
   const { data: vendas } = useAsyncData(() => vendaService.list(empresaId), [empresaId, version], []);
-  const { data: clientesAtivos } = useAsyncData(
+  const { data: clientes } = useAsyncData(
     () =>
       config.pessoaCadastro
-        ? clienteService.listAtivos(empresaId)
+        ? clienteService.list(empresaId)
         : Promise.resolve([] as Cliente[]),
     [empresaId, version, config.pessoaCadastro],
     [] as Cliente[]
   );
-  const { data: fornecedoresAtivos } = useAsyncData(
+  const { data: fornecedores } = useAsyncData(
     () =>
       config.pessoaCadastro
-        ? fornecedorService.listAtivos(empresaId)
+        ? fornecedorService.list(empresaId)
         : Promise.resolve([] as Fornecedor[]),
     [empresaId, version, config.pessoaCadastro],
     [] as Fornecedor[]
   );
+  const clientesAtivos = useMemo(() => clientes.filter((c) => c.ativo), [clientes]);
+  const fornecedoresAtivos = useMemo(() => fornecedores.filter((f) => f.ativo), [fornecedores]);
 
   type ParceiroOpt = {
     nome: string;
     cnpjCpf: string;
     tipoPessoa: TipoPessoa;
     kinds: ("cliente" | "fornecedor")[];
+    clienteId: string | null;
+    fornecedorId: string | null;
   };
 
   const parceirosCadastro = useMemo(() => {
@@ -275,6 +285,8 @@ export function ContasModule({
         cnpjCpf: c.cnpjCpf ?? "",
         tipoPessoa: c.tipoPessoa ?? "pj",
         kinds: ["cliente"],
+        clienteId: c.id,
+        fornecedorId: null,
       });
     }
     for (const f of fornecedoresAtivos) {
@@ -282,12 +294,15 @@ export function ContasModule({
       if (existing) {
         if (!existing.kinds.includes("fornecedor")) existing.kinds.push("fornecedor");
         if (!existing.cnpjCpf && f.cnpjCpf) existing.cnpjCpf = f.cnpjCpf;
+        existing.fornecedorId = f.id;
       } else {
         map.set(f.nome, {
           nome: f.nome,
           cnpjCpf: f.cnpjCpf ?? "",
           tipoPessoa: f.tipoPessoa ?? "pj",
           kinds: ["fornecedor"],
+          clienteId: null,
+          fornecedorId: f.id,
         });
       }
     }
@@ -334,6 +349,7 @@ export function ContasModule({
   );
 
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
+  const [busca, setBusca] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -384,10 +400,38 @@ export function ContasModule({
     }
   );
 
-  const filtradas = useMemo(
-    () => (filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus)),
-    [contas, filtroStatus]
-  );
+  const filtradas = useMemo(() => {
+    const porStatus = filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus);
+    const q = busca.trim();
+    if (!q) return porStatus;
+    return porStatus.filter((c) => {
+      const preferFornecedor = config.pessoaCadastro === "fornecedor";
+      const listaPref = preferFornecedor ? fornecedores : clientes;
+      const listaOutra = preferFornecedor ? clientes : fornecedores;
+      const cadastro = c.parceiroId
+        ? listaPref.find((p) => p.id === c.parceiroId) ?? listaOutra.find((p) => p.id === c.parceiroId)
+        : listaPref.find((p) => p.nome === c.pessoa.trim()) ?? listaOutra.find((p) => p.nome === c.pessoa.trim());
+      const contaFin = c.contaFinanceiraId ? contaFinMap.get(c.contaFinanceiraId) : undefined;
+      return combinaBusca(q, [
+        c.pessoa,
+        cadastro?.nome,
+        cadastro?.nomeFantasia,
+        cadastro?.cnpjCpf,
+        cadastro?.telefone,
+        ...partesValor(c.valor),
+        ...partesValor(c.valorDevido),
+        ...partesValor(c.valorBaixado),
+        ...partesData(c.dataVencimento),
+        ...partesData(c.dataCompetencia),
+        ...partesData(c.dataBaixa),
+        c.categoriaId ? catMap.get(c.categoriaId) : "",
+        contaFin ? labelContaFinanceira(contaFin) : "",
+        c.observacao,
+        c.status,
+        c.numeroNf,
+      ]);
+    });
+  }, [contas, filtroStatus, busca, catMap, contaFinMap, clientes, fornecedores, config.pessoaCadastro]);
 
   const allFilteredSelected =
     filtradas.length > 0 && filtradas.every((c) => selectedIds.has(c.id));
@@ -449,6 +493,25 @@ export function ContasModule({
     return { total, baixado, emAberto };
   }, [contas, config.statusBaixado]);
 
+  const totaisPorConta = useMemo(() => {
+    if (!config.usaContaFinanceira) return [];
+    const soma = new Map<string, number>();
+    let semConta = 0;
+    for (const c of contas) {
+      if (c.status === "cancelada" || c.transferencia) continue;
+      const valor = c.valorDevido ?? c.valor;
+      if (!c.contaFinanceiraId) semConta += valor;
+      else soma.set(c.contaFinanceiraId, (soma.get(c.contaFinanceiraId) ?? 0) + valor);
+    }
+    const linhas = contasFinanceiras.map((cf) => ({
+      id: cf.id,
+      nome: labelContaFinanceira(cf),
+      total: soma.get(cf.id) ?? 0,
+    }));
+    if (semConta > 0) linhas.push({ id: "sem-conta", nome: "Sem conta", total: semConta });
+    return linhas;
+  }, [contas, contasFinanceiras, config.usaContaFinanceira]);
+
   function resolveVincularCadastro(nome: string): boolean {
     if (!nome || !config.pessoaCadastro) return false;
     return parceirosCadastro.some((p) => p.nome === nome);
@@ -460,13 +523,33 @@ export function ContasModule({
 
   function applyParceiroSelecionado(nome: string) {
     const p = parceirosCadastro.find((x) => x.nome === nome);
-    setForm((prev) => ({ ...prev, pessoa: nome }));
+    const parceiroId = p
+      ? config.pessoaCadastro === "fornecedor"
+        ? p.fornecedorId
+        : p.clienteId
+      : null;
+    setForm((prev) => ({ ...prev, pessoa: nome, parceiroId }));
     if (p) {
       setPessoaTipoPessoa(p.tipoPessoa);
       setPessoaCnpjCpf(p.cnpjCpf ? formatCpfCnpj(p.cnpjCpf) : "");
     } else {
       setPessoaCnpjCpf("");
     }
+  }
+
+  function cadastroDaConta(conta: ContaLike): Cliente | Fornecedor | undefined {
+    const preferFornecedor = config.pessoaCadastro === "fornecedor";
+    const listaPref = preferFornecedor ? fornecedores : clientes;
+    const listaOutra = preferFornecedor ? clientes : fornecedores;
+    if (conta.parceiroId) {
+      const porId =
+        listaPref.find((p) => p.id === conta.parceiroId) ??
+        listaOutra.find((p) => p.id === conta.parceiroId);
+      if (porId) return porId;
+    }
+    const nome = conta.pessoa.trim();
+    if (!nome) return undefined;
+    return listaPref.find((p) => p.nome === nome) ?? listaOutra.find((p) => p.nome === nome);
   }
 
   function validatePessoaDocumento(): string | undefined {
@@ -529,6 +612,7 @@ export function ContasModule({
     setEditingId(c.id);
     setForm({
       pessoa: c.pessoa,
+      parceiroId: c.parceiroId ?? null,
       categoriaId: c.categoriaId,
       centroCustoId: c.centroCustoId,
       contaFinanceiraId: c.contaFinanceiraId ?? null,
@@ -633,8 +717,8 @@ export function ContasModule({
    * - Cria mesmo sem CPF/CNPJ (só com o nome).
    * - Se o cadastro já existe sem documento e o usuário preenche depois, atualiza.
    */
-  async function ensureParceiroCadastro(nome: string) {
-    if (!config.pessoaCadastro || !nome.trim()) return;
+  async function ensureParceiroCadastro(nome: string): Promise<string | null> {
+    if (!config.pessoaCadastro || !nome.trim()) return null;
     const nomeTrim = nome.trim();
     const doc = pessoaCnpjCpf.trim();
     const preferFornecedor = config.pessoaCadastro === "fornecedor";
@@ -659,7 +743,9 @@ export function ContasModule({
           await clienteService.update(empresaId, existing.id, patch);
         }
       }
-      return;
+      if (preferFornecedor && existingForn) return existingForn.id;
+      if (!preferFornecedor && existingCli) return existingCli.id;
+      return null;
     }
 
     const data = parceiroToPayload({
@@ -669,10 +755,11 @@ export function ContasModule({
       cnpjCpf: doc,
     });
     if (preferFornecedor) {
-      await fornecedorService.create(empresaId, data);
-    } else {
-      await clienteService.create(empresaId, data);
+      const criado = await fornecedorService.create(empresaId, data);
+      return criado.id;
     }
+    const criado = await clienteService.create(empresaId, data);
+    return criado.id;
   }
 
   async function save() {
@@ -683,7 +770,8 @@ export function ContasModule({
     }
     try {
       if (payload.pessoa) {
-        await ensureParceiroCadastro(payload.pessoa);
+        const id = await ensureParceiroCadastro(payload.pessoa);
+        if (id) payload.parceiroId = id;
       }
       if (editingId) {
         await config.update(empresaId, editingId, payload);
@@ -834,7 +922,16 @@ export function ContasModule({
         <SummaryCard label="Em aberto" value={formatBRL(totais.emAberto)} tone="warning" />
       </div>
 
+      {totaisPorConta.length > 0 && (
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {totaisPorConta.map((c) => (
+            <SummaryCard key={c.id} label={c.nome} value={formatBRL(c.total)} compact />
+          ))}
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <BuscaCampo value={busca} onChange={setBusca} />
         {STATUS_OPTS.map((s) => (
           <button
             key={s}
@@ -872,6 +969,9 @@ export function ContasModule({
       </div>
 
       {filtradas.length === 0 ? (
+        busca.trim() ? (
+          <BuscaVazia />
+        ) : (
         <EmptyState
           icon={config.icon}
           title="Nenhum lançamento"
@@ -889,6 +989,7 @@ export function ContasModule({
             ) : undefined
           }
         />
+        )
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
@@ -948,7 +1049,18 @@ export function ContasModule({
                       </td>
                     )}
                     <td className="px-4 py-3">
-                      <div className="font-medium">{c.pessoa}</div>
+                      {(() => {
+                        const cadastro = cadastroDaConta(c);
+                        const detalhe = [cadastro?.cnpjCpf, cadastro?.telefone].filter(Boolean).join(" · ");
+                        return (
+                          <>
+                            <div className="font-medium">{cadastro?.nome || c.pessoa}</div>
+                            {detalhe && (
+                              <div className="text-xs text-muted-foreground">{detalhe}</div>
+                            )}
+                          </>
+                        );
+                      })()}
                       {c.parcelaNumero && c.parcelaTotal ? (
                         <div className="text-xs text-muted-foreground">
                           Parcela {c.parcelaNumero}/{c.parcelaTotal}
@@ -1105,7 +1217,7 @@ export function ContasModule({
                     <input
                       className="input"
                       value={form.pessoa}
-                      onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                      onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
                       placeholder={getPessoaPlaceholder("generico")}
                       autoFocus
                     />
@@ -1119,7 +1231,7 @@ export function ContasModule({
                         const checked = e.target.checked;
                         setVincularCadastro(checked);
                         if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
-                          setForm({ ...form, pessoa: "" });
+                          setForm({ ...form, pessoa: "", parceiroId: null });
                           setPessoaCnpjCpf("");
                         }
                       }}
@@ -1131,7 +1243,7 @@ export function ContasModule({
                 <input
                   className="input"
                   value={form.pessoa}
-                  onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                  onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
                   placeholder={getPessoaPlaceholder("generico")}
                   autoFocus
                 />
@@ -1257,7 +1369,7 @@ export function ContasModule({
                             <input
                               className="input"
                               value={form.pessoa}
-                              onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                              onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
                               placeholder={getPessoaPlaceholder(perfil)}
                             />
                           )}
@@ -1270,7 +1382,7 @@ export function ContasModule({
                                 const checked = e.target.checked;
                                 setVincularCadastro(checked);
                                 if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
-                                  setForm({ ...form, pessoa: "" });
+                                  setForm({ ...form, pessoa: "", parceiroId: null });
                                   setPessoaCnpjCpf("");
                                 }
                               }}
@@ -1282,7 +1394,7 @@ export function ContasModule({
                         <input
                           className="input"
                           value={form.pessoa}
-                          onChange={(e) => setForm({ ...form, pessoa: e.target.value })}
+                          onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
                           placeholder={getPessoaPlaceholder(perfil)}
                         />
                       )}
@@ -1652,10 +1764,12 @@ function SummaryCard({
   label,
   value,
   tone,
+  compact,
 }: {
   label: string;
   value: string;
   tone?: "success" | "warning";
+  compact?: boolean;
 }) {
   const color =
     tone === "success"
@@ -1666,7 +1780,7 @@ function SummaryCard({
   return (
     <div className="card px-4 py-3">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 text-lg font-semibold tabular-nums ${color}`}>{value}</p>
+      <p className={`mt-1 font-semibold tabular-nums ${compact ? "text-base" : "text-lg"} ${color}`}>{value}</p>
     </div>
   );
 }

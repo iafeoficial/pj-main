@@ -268,6 +268,7 @@ type ContaPagarInput = Omit<
   | "valorPago"
   | "dataPagamento"
   | "contaFinanceiraId"
+  | "fornecedorId"
   | "desconto"
   | "juros"
   | "numeroNf"
@@ -283,6 +284,7 @@ type ContaPagarInput = Omit<
   valorPago?: number;
   dataPagamento?: string | null;
   contaFinanceiraId?: string | null;
+  fornecedorId?: string | null;
   desconto?: number;
   juros?: number;
   numeroNf?: string;
@@ -340,6 +342,7 @@ async function insertPagar(
     dataPagamento: data.dataPagamento ?? null,
     transferencia: data.transferencia ?? false,
     contaFinanceiraId: data.contaFinanceiraId ?? null,
+    fornecedorId: data.fornecedorId ?? null,
     createdBy: getCurrentUser(),
     ...overrides,
   } as Omit<ContaPagar, "id" | "createdAt" | "updatedAt" | "empresaId">);
@@ -525,11 +528,13 @@ type ContaReceberInput = Omit<
   | "valorRecebido"
   | "dataRecebimento"
   | "contaFinanceiraId"
+  | "clienteId"
   | "transferencia"
 > & {
   valorRecebido?: number;
   dataRecebimento?: string | null;
   contaFinanceiraId?: string | null;
+  clienteId?: string | null;
   transferencia?: boolean;
 };
 
@@ -547,6 +552,7 @@ export const contaReceberService = {
     const c = await contaReceberTable.create(empresaId, {
       ...data,
       contaFinanceiraId: data.contaFinanceiraId ?? null,
+      clienteId: data.clienteId ?? null,
       valorRecebido: data.valorRecebido ?? 0,
       dataRecebimento: data.dataRecebimento ?? null,
       transferencia: data.transferencia ?? false,

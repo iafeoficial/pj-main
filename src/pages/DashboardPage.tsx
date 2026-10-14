@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Wallet,
   ArrowDownCircle,
@@ -18,10 +18,18 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getDashboard, getFluxoCaixa, type DashboardData, type FluxoBucket } from "@/data/analytics";
+import {
+  getDashboard,
+  getFluxoCaixaPeriodo,
+  getPeriodoPadrao,
+  getSaldosContas,
+  type DashboardData,
+  type FluxoBucket,
+  type SaldoContaLinha,
+} from "@/data/analytics";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { formatBRL, formatDate } from "@/lib/utils";
+import { cn, formatBRL, formatDate } from "@/lib/utils";
 
 const EMPTY_DASH: DashboardData = {
   saldoAtual: 0,
@@ -38,19 +46,79 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 
+type PeriodoDash = "mes" | "seis" | "ano" | "tudo";
+
+const PERIODOS: { id: PeriodoDash; label: string }[] = [
+  { id: "mes", label: "Este mês" },
+  { id: "seis", label: "6 meses" },
+  { id: "ano", label: "Este ano" },
+  { id: "tudo", label: "Tudo" },
+];
+
+function dataLocal(d: Date): string {
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
+/** Mês corrente, últimos 6 meses civis ou ano corrente. */
+function intervaloCurto(modo: Exclude<PeriodoDash, "tudo">): { inicio: string; fim: string } {
+  const hoje = new Date();
+  const ano = hoje.getFullYear();
+  const mes = hoje.getMonth();
+  if (modo === "mes") {
+    return { inicio: dataLocal(new Date(ano, mes, 1)), fim: dataLocal(new Date(ano, mes + 1, 0)) };
+  }
+  if (modo === "ano") {
+    return { inicio: `${ano}-01-01`, fim: `${ano}-12-31` };
+  }
+  return { inicio: dataLocal(new Date(ano, mes - 5, 1)), fim: dataLocal(new Date(ano, mes + 1, 0)) };
+}
+
 function Inner({ empresaId }: { empresaId: string }) {
   const { version, empresaAtiva } = useEmpresa();
+  const [periodoDash, setPeriodoDash] = useState<PeriodoDash>("tudo");
   const { data } = useAsyncData(() => getDashboard(empresaId), [empresaId, version], EMPTY_DASH);
-  const { data: fluxo } = useAsyncData(
-    () => getFluxoCaixa(empresaId),
+  const { data: periodo } = useAsyncData(
+    () => getPeriodoPadrao(empresaId, "vencimento"),
     [empresaId, version],
+    null as { inicio: string; fim: string } | null
+  );
+  const faixa = useMemo(
+    () => (periodoDash === "tudo" ? periodo : intervaloCurto(periodoDash)),
+    [periodoDash, periodo]
+  );
+  const { data: fluxo } = useAsyncData(
+    () =>
+      faixa
+        ? getFluxoCaixaPeriodo(empresaId, faixa.inicio, faixa.fim)
+        : Promise.resolve([] as FluxoBucket[]),
+    [empresaId, version, faixa?.inicio, faixa?.fim],
     [] as FluxoBucket[]
   );
+  const { data: saldos } = useAsyncData(
+    () => getSaldosContas(empresaId),
+    [empresaId, version],
+    { contas: [] as SaldoContaLinha[], total: 0 }
+  );
 
-  const proximosVencimentos = useMemo(() => {
+  const noPeriodo = (iso: string) =>
+    periodoDash === "tudo" || (faixa != null && iso >= faixa.inicio && iso <= faixa.fim);
+
+  const valorGanho = data.receber
+    .filter((c) => c.status !== "cancelada" && noPeriodo(c.dataVencimento))
+    .reduce((s, c) => s + c.valor, 0);
+  const valorGasto = data.pagar
+    .filter((c) => c.status !== "cancelada" && noPeriodo(c.dataVencimento))
+    .reduce((s, c) => s + c.valor, 0);
+  const inadimplencia = data.receber
+    .filter((c) => c.status === "vencida" && noPeriodo(c.dataVencimento))
+    .reduce((s, c) => s + (c.valor - c.valorRecebido), 0);
+
+  const proximosVencimentos = (() => {
     const todos = [
       ...data.pagar
-        .filter((c) => c.status === "aberta" || c.status === "parcial" || c.status === "vencida")
+        .filter((c) => (c.status === "aberta" || c.status === "parcial" || c.status === "vencida") && noPeriodo(c.dataVencimento))
         .map((c) => ({
           id: c.id,
           tipo: "Pagar" as const,
@@ -60,7 +128,7 @@ function Inner({ empresaId }: { empresaId: string }) {
           status: c.status,
         })),
       ...data.receber
-        .filter((c) => c.status === "aberta" || c.status === "parcial" || c.status === "vencida")
+        .filter((c) => (c.status === "aberta" || c.status === "parcial" || c.status === "vencida") && noPeriodo(c.dataVencimento))
         .map((c) => ({
           id: c.id,
           tipo: "Receber" as const,
@@ -71,7 +139,7 @@ function Inner({ empresaId }: { empresaId: string }) {
         })),
     ];
     return todos.sort((a, b) => a.vencimento.localeCompare(b.vencimento)).slice(0, 8);
-  }, [data]);
+  })();
 
   return (
     <>
@@ -80,21 +148,54 @@ function Inner({ empresaId }: { empresaId: string }) {
         subtitle={`Visão financeira de ${empresaAtiva?.nomeFantasia ?? ""}.`}
       />
 
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {PERIODOS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => setPeriodoDash(p.id)}
+            className={cn(
+              "badge cursor-pointer",
+              periodoDash === p.id
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-accent"
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi icon={Wallet} label="Saldo atual" value={data.saldoAtual} tone={data.saldoAtual >= 0 ? "default" : "danger"} />
         <Kpi icon={TrendingUp} label="Saldo projetado" value={data.saldoProjetado} tone={data.saldoProjetado >= 0 ? "success" : "danger"} />
         <Kpi icon={ArrowDownCircle} label="Total a receber" value={data.totalAReceber} tone="success" />
         <Kpi icon={ArrowUpCircle} label="Total a pagar" value={data.totalAPagar} tone="danger" />
-        <Kpi icon={ArrowDownCircle} label="Receitas do mês" value={data.receitasMes} tone="success" />
-        <Kpi icon={ArrowUpCircle} label="Despesas do mês" value={data.despesasMes} tone="danger" />
-        <Kpi icon={AlertTriangle} label="Inadimplência" value={data.inadimplencia} tone={data.inadimplencia > 0 ? "warning" : "default"} />
+        <Kpi icon={ArrowDownCircle} label="Valor ganho" value={valorGanho} tone="success" />
+        <Kpi icon={ArrowUpCircle} label="Valor gasto" value={valorGasto} tone="danger" />
+        <Kpi icon={AlertTriangle} label="Inadimplência" value={inadimplencia} tone={inadimplencia > 0 ? "warning" : "default"} />
         <Kpi
           icon={CalendarClock}
-          label="Resultado do mês"
-          value={data.receitasMes - data.despesasMes}
-          tone={data.receitasMes - data.despesasMes >= 0 ? "success" : "danger"}
+          label="Resultado"
+          value={valorGanho - valorGasto}
+          tone={valorGanho - valorGasto >= 0 ? "success" : "danger"}
         />
       </div>
+
+      {saldos.contas.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          <Kpi icon={Wallet} label="Saldo das contas" value={saldos.total} tone={saldos.total >= 0 ? "default" : "danger"} />
+          {saldos.contas.map((c) => (
+            <Kpi
+              key={c.id}
+              icon={Wallet}
+              label={c.nome}
+              value={c.saldo}
+              tone={c.saldo >= 0 ? "default" : "danger"}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-5">
         <div className="card p-4 lg:col-span-3">
@@ -108,7 +209,9 @@ function Inner({ empresaId }: { empresaId: string }) {
                   fontSize={11}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                  tickFormatter={(v: number) =>
+                    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(Math.round(v))
+                  }
                 />
                 <Tooltip
                   formatter={(v: number) => formatBRL(v)}

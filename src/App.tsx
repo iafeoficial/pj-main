@@ -24,6 +24,7 @@ import { CertificadosPage } from "@/pages/CertificadosPage";
 import { FiscalPage } from "@/pages/FiscalPage";
 import { FornecedoresPage } from "@/pages/FornecedoresPage";
 import { ClientesPage } from "@/pages/ClientesPage";
+import { ParceirosPage } from "@/pages/ParceirosPage";
 import { VendedoresPage } from "@/pages/VendedoresPage";
 import { ProdutosPage } from "@/pages/ProdutosPage";
 import { EstoquePage } from "@/pages/EstoquePage";
@@ -67,6 +68,7 @@ function Gate() {
           <Route path="fiscal" element={<FiscalPage />} />
           <Route path="fornecedores" element={<FornecedoresPage />} />
           <Route path="clientes" element={<ClientesPage />} />
+          <Route path="parceiros" element={<ParceirosPage />} />
           <Route path="vendedores" element={<VendedoresPage />} />
           <Route path="produtos" element={<ProdutosPage />} />
           <Route path="estoque" element={<EstoquePage />} />

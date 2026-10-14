@@ -24,6 +24,7 @@ const config: ContasConfig = {
       id: c.id,
       empresaId: c.empresaId,
       pessoa: c.cliente,
+      parceiroId: c.clienteId,
       categoriaId: c.categoriaId,
       centroCustoId: c.centroCustoId,
       contaFinanceiraId: c.contaFinanceiraId,
@@ -39,6 +40,7 @@ const config: ContasConfig = {
   create: (empresaId, input) =>
     contaReceberService.create(empresaId, {
       cliente: input.pessoa,
+      clienteId: input.parceiroId,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId ?? null,
@@ -51,6 +53,7 @@ const config: ContasConfig = {
   update: (empresaId, id, input) =>
     contaReceberService.update(empresaId, id, {
       cliente: input.pessoa,
+      clienteId: input.parceiroId,
       categoriaId: input.categoriaId,
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId ?? null,

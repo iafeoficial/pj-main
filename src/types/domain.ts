@@ -116,6 +116,8 @@ export type RecorrenciaTipo =
 
 export interface ContaPagar extends OwnedEntity {
   fornecedor: string;
+  /** Cadastro de fornecedor, quando o lançamento nasceu de um parceiro. */
+  fornecedorId: string | null;
   categoriaId: string | null;
   centroCustoId: string | null;
   contaFinanceiraId: string | null;
@@ -163,6 +165,8 @@ export type ContaReceberStatus =
 
 export interface ContaReceber extends OwnedEntity {
   cliente: string;
+  /** Cadastro de cliente, quando o lançamento nasceu de um parceiro. */
+  clienteId: string | null;
   categoriaId: string | null;
   centroCustoId: string | null;
   contaFinanceiraId: string | null;

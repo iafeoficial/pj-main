@@ -1,7 +1,63 @@
 // Fase 5 — serviços de cadastros (fornecedores, clientes, vendedores), assíncronos.
 import type { Cliente, Fornecedor, Vendedor } from "@/types/domain";
 import { logAudit } from "./audit";
-import { clienteTable, fornecedorTable, vendedorTable } from "./repos";
+import {
+  clienteTable,
+  contaPagarTable,
+  contaReceberTable,
+  fornecedorTable,
+  oportunidadeTable,
+  pedidoCompraTable,
+  pedidoVendaTable,
+  vendedorTable,
+} from "./repos";
+
+/** Liga títulos que ainda só têm o nome e copia o nome novo para contas, pedidos e CRM. */
+async function propagarFornecedor(empresaId: string, anterior: Fornecedor, atual: Fornecedor) {
+  const contas = await contaPagarTable.list(empresaId);
+  for (const conta of contas) {
+    const jaLigado = conta.fornecedorId === atual.id;
+    const peloNome = !conta.fornecedorId && (conta.fornecedor === anterior.nome || conta.fornecedor === atual.nome);
+    if (!jaLigado && !peloNome) continue;
+    const patch: { fornecedor?: string; fornecedorId?: string } = {};
+    if (conta.fornecedor !== atual.nome) patch.fornecedor = atual.nome;
+    if (conta.fornecedorId !== atual.id) patch.fornecedorId = atual.id;
+    if (Object.keys(patch).length > 0) await contaPagarTable.update(empresaId, conta.id, patch);
+  }
+  if (anterior.nome === atual.nome) return;
+  const compras = await pedidoCompraTable.list(empresaId);
+  for (const pedido of compras) {
+    if (pedido.fornecedorId === atual.id && pedido.fornecedorNome !== atual.nome) {
+      await pedidoCompraTable.update(empresaId, pedido.id, { fornecedorNome: atual.nome });
+    }
+  }
+}
+
+async function propagarCliente(empresaId: string, anterior: Cliente, atual: Cliente) {
+  const contas = await contaReceberTable.list(empresaId);
+  for (const conta of contas) {
+    const jaLigado = conta.clienteId === atual.id;
+    const peloNome = !conta.clienteId && (conta.cliente === anterior.nome || conta.cliente === atual.nome);
+    if (!jaLigado && !peloNome) continue;
+    const patch: { cliente?: string; clienteId?: string } = {};
+    if (conta.cliente !== atual.nome) patch.cliente = atual.nome;
+    if (conta.clienteId !== atual.id) patch.clienteId = atual.id;
+    if (Object.keys(patch).length > 0) await contaReceberTable.update(empresaId, conta.id, patch);
+  }
+  if (anterior.nome === atual.nome) return;
+  const vendas = await pedidoVendaTable.list(empresaId);
+  for (const pedido of vendas) {
+    if (pedido.clienteId === atual.id && pedido.clienteNome !== atual.nome) {
+      await pedidoVendaTable.update(empresaId, pedido.id, { clienteNome: atual.nome });
+    }
+  }
+  const oportunidades = await oportunidadeTable.list(empresaId);
+  for (const item of oportunidades) {
+    if (item.clienteId === atual.id && item.clienteNome !== atual.nome) {
+      await oportunidadeTable.update(empresaId, item.id, { clienteNome: atual.nome });
+    }
+  }
+}
 
 export const fornecedorService = {
   list: (empresaId: string) => fornecedorTable.list(empresaId, { column: "nome" }),
@@ -13,7 +69,9 @@ export const fornecedorService = {
     return f;
   },
   async update(empresaId: string, id: string, data: Partial<Fornecedor>) {
+    const anterior = await fornecedorTable.find(empresaId, id);
     const f = await fornecedorTable.update(empresaId, id, data);
+    if (anterior) await propagarFornecedor(empresaId, anterior, f);
     await logAudit({ empresaId, entidade: "Fornecedor", entidadeId: id, acao: "alteracao", descricao: `Fornecedor "${f.nome}" alterado.` });
     return f;
   },
@@ -33,7 +91,9 @@ export const clienteService = {
     return c;
   },
   async update(empresaId: string, id: string, data: Partial<Cliente>) {
+    const anterior = await clienteTable.find(empresaId, id);
     const c = await clienteTable.update(empresaId, id, data);
+    if (anterior) await propagarCliente(empresaId, anterior, c);
     await logAudit({ empresaId, entidade: "Cliente", entidadeId: id, acao: "alteracao", descricao: `Cliente "${c.nome}" alterado.` });
     return c;
   },
