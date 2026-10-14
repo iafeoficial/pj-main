@@ -139,6 +139,8 @@ export interface ContaPagar extends OwnedEntity {
   dataPagamento: string | null;
   status: ContaPagarStatus;
   observacao: string;
+  /** Movimentação interna: não entra em totais, fluxo, DRE nem relatórios. */
+  transferencia: boolean;
   createdBy: string;
 }
 
@@ -171,7 +173,18 @@ export interface ContaReceber extends OwnedEntity {
   dataRecebimento: string | null;
   status: ContaReceberStatus;
   observacao: string;
+  /** Movimentação interna: não entra em totais, fluxo, DRE nem relatórios. */
+  transferencia: boolean;
   createdBy: string;
+}
+
+/** Saída de uma conta e entrada em outra, da mesma empresa. Neutra no resultado. */
+export interface TransferenciaConta extends OwnedEntity {
+  contaOrigemId: string;
+  contaDestinoId: string;
+  data: string; // yyyy-MM-dd
+  valor: number;
+  observacao: string;
 }
 
 // ---- Fase 2: Conciliação Bancária ----

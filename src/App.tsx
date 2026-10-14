@@ -11,6 +11,7 @@ import { CategoriasPage } from "@/pages/CategoriasPage";
 import { CentrosCustoPage } from "@/pages/CentrosCustoPage";
 import { ContasCartoesPage } from "@/pages/ContasCartoesPage";
 import { ContasPagarPage } from "@/pages/ContasPagarPage";
+import { TransferenciasPage } from "@/pages/TransferenciasPage";
 import { ContasReceberPage } from "@/pages/ContasReceberPage";
 import { FluxoCaixaPage } from "@/pages/FluxoCaixaPage";
 import { RelatoriosPage } from "@/pages/RelatoriosPage";
@@ -53,6 +54,7 @@ function Gate() {
         <Route element={<AppShell />}>
           <Route index element={<DashboardPage />} />
           <Route path="contas-pagar" element={<ContasPagarPage />} />
+          <Route path="transferencias" element={<TransferenciasPage />} />
           <Route path="contas-receber" element={<ContasReceberPage />} />
           <Route path="fluxo-caixa" element={<FluxoCaixaPage />} />
           <Route path="conciliacao" element={<ConciliacaoPage />} />

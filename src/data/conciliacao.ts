@@ -505,14 +505,18 @@ export async function sugerirConciliacao(empresaId: string, t: TransacaoBancaria
   };
 
   if (t.tipo === "credito") {
-    const receber = (await contaReceberService.list(empresaId)).filter((c) => titulosAbertos(c.status)) as ContaReceber[];
+    const receber = (await contaReceberService.list(empresaId)).filter(
+      (c) => titulosAbertos(c.status) && !c.transferencia
+    ) as ContaReceber[];
     for (const c of receber) {
       const saldo = c.valor - c.valorRecebido;
       const r = avaliar(saldo, c.dataVencimento, "", c.cliente);
       if (r) sugestoes.push({ tipo: "receber", id: c.id, pessoa: c.cliente, valor: c.valor, saldo, dataVencimento: c.dataVencimento, ...r });
     }
   } else {
-    const pagar = (await contaPagarService.list(empresaId)).filter((c) => titulosAbertos(c.status)) as ContaPagar[];
+    const pagar = (await contaPagarService.list(empresaId)).filter(
+      (c) => titulosAbertos(c.status) && !c.transferencia
+    ) as ContaPagar[];
     for (const c of pagar) {
       const saldo = c.valor - c.valorPago;
       const r = avaliar(saldo, c.dataVencimento, "", c.fornecedor);

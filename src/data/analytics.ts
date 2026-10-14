@@ -15,6 +15,10 @@ function isLiquidada(status: string): boolean {
 function isAtiva(status: string): boolean {
   return status !== "cancelada";
 }
+/** Transferência entre contas da mesma empresa não é despesa nem receita. */
+function entraNoResultado(c: { transferencia?: boolean }): boolean {
+  return c.transferencia !== true;
+}
 
 export interface DashboardData {
   saldoAtual: number;
@@ -29,10 +33,12 @@ export interface DashboardData {
 }
 
 export async function getDashboard(empresaId: string): Promise<DashboardData> {
-  const [pagar, receber] = await Promise.all([
+  const [pagarAll, receberAll] = await Promise.all([
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
   ]);
+  const pagar = pagarAll.filter(entraNoResultado);
+  const receber = receberAll.filter(entraNoResultado);
   const { start, end } = monthRange();
 
   const recebido = receber.reduce((s, c) => s + c.valorRecebido, 0);
@@ -80,8 +86,8 @@ export async function getFluxoCaixa(empresaId: string, mesesAntes = 2, mesesDepo
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
   ]);
-  const pagar = pagarAll.filter((c) => isAtiva(c.status));
-  const receber = receberAll.filter((c) => isAtiva(c.status));
+  const pagar = pagarAll.filter((c) => isAtiva(c.status) && entraNoResultado(c));
+  const receber = receberAll.filter((c) => isAtiva(c.status) && entraNoResultado(c));
 
   const ref = new Date();
   const buckets: FluxoBucket[] = [];
@@ -152,8 +158,8 @@ export async function getRelatorios(empresaId: string, inicio: string, fim: stri
     categoriaService.list(empresaId),
     centroCustoService.list(empresaId),
   ]);
-  const pagar = pagarAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
-  const receber = receberAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
+  const pagar = pagarAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
+  const receber = receberAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
 
   const catMap = new Map(categorias.map((c) => [c.id, c.nome]));
   const ccMap = new Map(centros.map((c) => [c.id, c.nome]));
@@ -278,8 +284,8 @@ export async function getDRE(empresaId: string, inicio: string, fim: string): Pr
     categoriaService.list(empresaId),
     categoriaGrupoService.list(empresaId),
   ]);
-  const pagar = pagarAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
-  const receber = receberAll.filter((c) => isAtiva(c.status) && inRange(c.dataCompetencia));
+  const pagar = pagarAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
+  const receber = receberAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
 
   const receitas = buildDREHierarquia(
     receber.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),

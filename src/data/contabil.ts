@@ -29,7 +29,7 @@ export async function getLancamentosContabeis(
 
   // Pagamentos: D Despesa (categoria)  /  C Caixa/Bancos
   for (const c of pagar) {
-    if (c.status === "cancelada" || c.valorPago <= 0 || !inRange(c.dataPagamento)) continue;
+    if (c.transferencia || c.status === "cancelada" || c.valorPago <= 0 || !inRange(c.dataPagamento)) continue;
     const conta = c.categoriaId ? catMap.get(c.categoriaId) ?? "Despesas" : "Despesas";
     lancamentos.push({
       data: c.dataPagamento as string,
@@ -42,7 +42,7 @@ export async function getLancamentosContabeis(
 
   // Recebimentos: D Caixa/Bancos  /  C Receita (categoria)
   for (const c of receber) {
-    if (c.status === "cancelada" || c.valorRecebido <= 0 || !inRange(c.dataRecebimento)) continue;
+    if (c.transferencia || c.status === "cancelada" || c.valorRecebido <= 0 || !inRange(c.dataRecebimento)) continue;
     const conta = c.categoriaId ? catMap.get(c.categoriaId) ?? "Receitas" : "Receitas";
     lancamentos.push({
       data: c.dataRecebimento as string,

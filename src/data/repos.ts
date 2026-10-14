@@ -21,6 +21,7 @@ import type {
   Produto,
   RegraConciliacao,
   TransacaoBancaria,
+  TransferenciaConta,
   Vendedor,
 } from "@/types/domain";
 import { GlobalTable, OwnedTable } from "./db";
@@ -33,6 +34,7 @@ export const contaFinanceiraTable = new OwnedTable<ContaFinanceira>("contas_fina
 export const contaPagarTable = new OwnedTable<ContaPagar>("contas_pagar");
 export const pagamentoContaTable = new OwnedTable<PagamentoConta>("pagamentos_conta");
 export const contaReceberTable = new OwnedTable<ContaReceber>("contas_receber");
+export const transferenciaContaTable = new OwnedTable<TransferenciaConta>("transferencias_contas");
 export const extratoTable = new OwnedTable<ExtratoBancario>("extratos_bancarios");
 export const transacaoTable = new OwnedTable<TransacaoBancaria>("transacoes_bancarias");
 export const regraTable = new OwnedTable<RegraConciliacao>("regras_conciliacao");

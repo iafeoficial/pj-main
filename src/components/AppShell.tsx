@@ -27,6 +27,7 @@ import {
   Target,
   Percent,
   Wallet,
+  ArrowLeftRight,
   LogOut,
   Menu,
   X,
@@ -55,6 +56,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/", label: "Dashboard", icon: LayoutDashboard, cap: "dashboard" },
       { to: "/contas-pagar", label: "Contas a Pagar", icon: ArrowUpCircle, cap: "financeiro" },
+      { to: "/transferencias", label: "Transferência entre contas", icon: ArrowLeftRight, cap: "financeiro" },
       { to: "/contas-receber", label: "Contas a Receber", icon: ArrowDownCircle, cap: "financeiro" },
       { to: "/fluxo-caixa", label: "Fluxo de Caixa", icon: TrendingUp, cap: "financeiro" },
       { to: "/relatorios", label: "Relatórios", icon: FileBarChart, cap: "financeiro" },

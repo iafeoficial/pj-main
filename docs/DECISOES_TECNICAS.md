@@ -209,6 +209,18 @@ fluxo e conciliação, sem migration.
 **Implementação:** `src/lib/movimentacaoPlanilha.ts` e `src/data/importacaoFinanceira.ts`;
 botão em `ContasModule`.
 
+## ADR-022 — Transferência entre contas é neutra
+**Decisão:** transferência entre contas da mesma empresa fica na tabela
+`transferencias_contas` (origem, destino, data, valor, observação) e não gera
+conta a pagar nem a receber. Título já lançado pode ser marcado com
+`transferencia`; nesse caso sai dos totais da lista, do dashboard, do fluxo,
+da DRE, dos relatórios, da exportação contábil e das sugestões de conciliação,
+e passa a aparecer na página `/transferencias` com o nome do lançamento.
+A linha continua visível para desmarcar. Nada é apagado automaticamente.
+**Motivo:** mover dinheiro de uma conta para outra não é despesa nem receita.
+**Implementação:** migration `0023_transferencias_contas.sql`; página
+`/transferencias`; ação na lista de [`ContasModule`](src/features/contas/ContasModule.tsx).
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

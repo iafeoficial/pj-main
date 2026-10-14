@@ -278,6 +278,7 @@ type ContaPagarInput = Omit<
   | "recorrencia"
   | "recorrenciaDias"
   | "grupoRecorrencia"
+  | "transferencia"
 > & {
   valorPago?: number;
   dataPagamento?: string | null;
@@ -296,6 +297,7 @@ type ContaPagarInput = Omit<
   parcelas?: number;
   /** Ao criar com `recorrencia`: quantas ocorrências gerar (inclui a primeira). */
   recorrenciaOcorrencias?: number;
+  transferencia?: boolean;
 };
 
 function normalizePagarExtras(data: ContaPagarInput) {
@@ -336,6 +338,7 @@ async function insertPagar(
     ...extras,
     valorPago: data.valorPago ?? 0,
     dataPagamento: data.dataPagamento ?? null,
+    transferencia: data.transferencia ?? false,
     contaFinanceiraId: data.contaFinanceiraId ?? null,
     createdBy: getCurrentUser(),
     ...overrides,
@@ -522,10 +525,12 @@ type ContaReceberInput = Omit<
   | "valorRecebido"
   | "dataRecebimento"
   | "contaFinanceiraId"
+  | "transferencia"
 > & {
   valorRecebido?: number;
   dataRecebimento?: string | null;
   contaFinanceiraId?: string | null;
+  transferencia?: boolean;
 };
 
 export const contaReceberService = {
@@ -544,6 +549,7 @@ export const contaReceberService = {
       contaFinanceiraId: data.contaFinanceiraId ?? null,
       valorRecebido: data.valorRecebido ?? 0,
       dataRecebimento: data.dataRecebimento ?? null,
+      transferencia: data.transferencia ?? false,
       createdBy: getCurrentUser(),
     } as Omit<ContaReceber, "id" | "createdAt" | "updatedAt" | "empresaId">);
     await logAudit({ empresaId, entidade: "ContaReceber", entidadeId: c.id, acao: "inclusao", descricao: `Conta a receber de "${c.cliente}" criada.` });

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Pencil, Plus, Trash2, CheckCircle2, Ban, Upload } from "lucide-react";
+import { Pencil, Plus, Trash2, CheckCircle2, Ban, Upload, ArrowLeftRight } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type {
   Categoria,
@@ -83,6 +83,8 @@ export interface ContaLike {
   dataBaixa: string | null;
   status: string;
   observacao: string;
+  /** Fora dos totais: movimentação entre contas da mesma empresa. */
+  transferencia?: boolean;
 }
 
 export interface ContasConfig {
@@ -111,6 +113,7 @@ export interface ContasConfig {
   listPagamentos?: (empresaId: string, id: string) => Promise<PagamentoConta[]>;
   cancelar: (empresaId: string, id: string) => Promise<unknown>;
   remove: (empresaId: string, id: string) => Promise<unknown>;
+  setTransferencia: (empresaId: string, id: string, transferencia: boolean) => Promise<unknown>;
 }
 
 export interface ContaFormData {
@@ -422,8 +425,22 @@ export function ContasModule({
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlightId, filtradas]);
 
+  async function toggleTransferencia(c: ContaLike) {
+    try {
+      await config.setTransferencia(empresaId, c.id, !c.transferencia);
+      bumpData();
+      notify(
+        c.transferencia
+          ? "Lançamento voltou a contar nos totais."
+          : "Marcado como transferência. Não entra nos totais."
+      );
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
   const totais = useMemo(() => {
-    const ativas = contas.filter((c) => c.status !== "cancelada");
+    const ativas = contas.filter((c) => c.status !== "cancelada" && !c.transferencia);
     const total = ativas.reduce((s, c) => s + (c.valorDevido ?? c.valor), 0);
     const baixado = ativas.reduce((s, c) => s + c.valorBaixado, 0);
     const emAberto = ativas
@@ -937,6 +954,11 @@ export function ContasModule({
                           Parcela {c.parcelaNumero}/{c.parcelaTotal}
                         </div>
                       ) : null}
+                      {c.transferencia && (
+                        <div className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                          Transferência entre contas — fora dos totais
+                        </div>
+                      )}
                       {c.observacao && (
                         <div className="text-xs text-muted-foreground">{c.observacao}</div>
                       )}
@@ -989,6 +1011,13 @@ export function ContasModule({
                         )}
                         {!readOnly && (
                           <>
+                            <button
+                              className={`btn-ghost btn-sm ${c.transferencia ? "text-amber-700" : ""}`}
+                              title={c.transferencia ? "Desmarcar transferência" : "É transferência"}
+                              onClick={() => void toggleTransferencia(c)}
+                            >
+                              <ArrowLeftRight className="h-4 w-4" />
+                            </button>
                             <button className="btn-ghost btn-sm" onClick={() => openEdit(c)}>
                               <Pencil className="h-4 w-4" />
                             </button>

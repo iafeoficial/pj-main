@@ -34,6 +34,7 @@ const config: ContasConfig = {
       dataBaixa: c.dataRecebimento,
       status: c.status,
       observacao: c.observacao,
+      transferencia: c.transferencia,
     })),
   create: (empresaId, input) =>
     contaReceberService.create(empresaId, {
@@ -63,6 +64,8 @@ const config: ContasConfig = {
     contaReceberService.registrarRecebimento(empresaId, id, valor, data),
   cancelar: (empresaId, id) => contaReceberService.cancelar(empresaId, id),
   remove: (empresaId, id) => contaReceberService.remove(empresaId, id),
+  setTransferencia: (empresaId, id, transferencia) =>
+    contaReceberService.update(empresaId, id, { transferencia }),
 };
 
 export function ContasReceberPage() {

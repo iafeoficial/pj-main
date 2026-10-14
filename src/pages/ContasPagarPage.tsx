@@ -45,6 +45,7 @@ const config: ContasConfig = {
       dataBaixa: c.dataPagamento,
       status: c.status,
       observacao: c.observacao,
+      transferencia: c.transferencia,
     })),
   create: (empresaId, input) =>
     contaPagarService.create(empresaId, {
@@ -90,6 +91,8 @@ const config: ContasConfig = {
   listPagamentos: (empresaId, id) => contaPagarService.listPagamentos(empresaId, id),
   cancelar: (empresaId, id) => contaPagarService.cancelar(empresaId, id),
   remove: (empresaId, id) => contaPagarService.remove(empresaId, id),
+  setTransferencia: (empresaId, id, transferencia) =>
+    contaPagarService.update(empresaId, id, { transferencia }),
 };
 
 export function ContasPagarPage() {
