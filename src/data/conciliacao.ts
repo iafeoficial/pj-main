@@ -15,6 +15,7 @@ import { uid } from "@/lib/utils";
 import { logAudit } from "./audit";
 import { extratoTable, regraTable, transacaoTable } from "./repos";
 import { contaPagarService, contaReceberService } from "./services";
+import { transferenciaService } from "./transferencias";
 import { reativarTransacoesPorTitulo } from "./transacaoVinculo";
 
 export type LancarDeTransacaoInput = {
@@ -109,6 +110,7 @@ export const conciliacaoService = {
         statusConciliacao: "pendente",
         contaPagarId: null,
         contaReceberId: null,
+        transferenciaId: null,
       });
       existentes.add(t.fitid);
       importadas++;
@@ -135,12 +137,64 @@ export const conciliacaoService = {
   },
 
   async desfazer(empresaId: string, id: string) {
+    const t = await transacaoTable.find(empresaId, id);
+    if (t?.transferenciaId) {
+      try {
+        await transferenciaService.remove(empresaId, t.transferenciaId);
+      } catch {
+        // A transferência já pode ter sido excluída na página de transferências.
+      }
+    }
     await transacaoTable.update(empresaId, id, {
       statusConciliacao: "pendente",
       contaPagarId: null,
       contaReceberId: null,
+      transferenciaId: null,
     });
     await logAudit({ empresaId, entidade: "TransacaoBancaria", entidadeId: id, acao: "alteracao", descricao: "Conciliação desfeita." });
+  },
+
+  /**
+   * Registra a linha do extrato como transferência entre contas e a marca conciliada.
+   * Não cria conta a pagar nem a receber.
+   */
+  async lancarTransferencia(
+    empresaId: string,
+    transacaoId: string,
+    input: {
+      contaOrigemId: string;
+      contaDestinoId: string;
+      data: string;
+      valor: number;
+      observacao: string;
+    }
+  ) {
+    const t = await transacaoTable.find(empresaId, transacaoId);
+    if (!t) throw new Error("Transação não encontrada.");
+    if (t.statusConciliacao !== "pendente") {
+      throw new Error("Só é possível lançar transações pendentes.");
+    }
+    const transferencia = await transferenciaService.create(empresaId, {
+      contaOrigemId: input.contaOrigemId,
+      contaDestinoId: input.contaDestinoId,
+      data: input.data,
+      valor: input.valor,
+      observacao: input.observacao.trim() || t.descricao || "",
+    });
+    await transacaoTable.update(empresaId, transacaoId, {
+      statusConciliacao: "conciliada",
+      contaPagarId: null,
+      contaReceberId: null,
+      transferenciaId: transferencia.id,
+    });
+    await logAudit({
+      empresaId,
+      entidade: "TransacaoBancaria",
+      entidadeId: transacaoId,
+      acao: "baixa",
+      descricao: "Transação conciliada como transferência entre contas.",
+    });
+    return transferencia;
   },
 
   /** Confirma a conciliação (sempre manual) vinculando a transação a um título e baixando-o. */

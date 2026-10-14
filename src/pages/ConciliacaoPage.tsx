@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from "react";
-import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2, ArrowLeftRight } from "lucide-react";
 import type {
   Categoria,
-  CategoriaGrupo,
   CentroCusto,
   Cliente,
   ContaFinanceira,
@@ -22,17 +22,17 @@ import {
 } from "@/data/conciliacao";
 import {
   categoriaService,
-  categoriaGrupoService,
   centroCustoService,
   contaFinanceiraService,
 } from "@/data/services";
 import { clienteService, fornecedorService } from "@/data/cadastros";
+import { transferenciaService } from "@/data/transferencias";
 import { parseOFX } from "@/lib/ofx";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { formatCpfCnpj } from "@/lib/masks";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { formatBRL, formatDate } from "@/lib/utils";
+import { formatBRL, formatDate, today } from "@/lib/utils";
 import { canWrite } from "@/lib/rbac";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -84,11 +84,6 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as Categoria[]
   );
-  const { data: gruposCat } = useAsyncData(
-    () => categoriaGrupoService.list(empresaId),
-    [empresaId, version],
-    [] as CategoriaGrupo[]
-  );
   const { data: clientesAtivos } = useAsyncData(
     () => clienteService.listAtivos(empresaId),
     [empresaId, version],
@@ -113,14 +108,9 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [contasLancar, setContasLancar] = useState<ContaFinanceira[]>([]);
   const [centrosLancar, setCentrosLancar] = useState<CentroCusto[]>([]);
   const [categoriasLancarState, setCategoriasLancarState] = useState<Categoria[]>([]);
-  const [gruposLancar, setGruposLancar] = useState<CategoriaGrupo[]>([]);
   const contasParaSelect = contasLancar.length > 0 ? contasLancar : contasFinanceiras;
   const centrosParaSelect = centrosLancar.length > 0 ? centrosLancar : centros;
   const catMap = useMemo(() => new Map(categorias.map((c) => [c.id, c.nome])), [categorias]);
-  const grupoCatMap = useMemo(() => {
-    const fonte = gruposLancar.length > 0 ? gruposLancar : gruposCat;
-    return new Map(fonte.map((g) => [g.id, g.nome]));
-  }, [gruposCat, gruposLancar]);
 
   type ParceiroOpt = {
     nome: string;
@@ -193,6 +183,16 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [lancarErro, setLancarErro] = useState("");
   const [lancando, setLancando] = useState(false);
 
+  const [transfAlvo, setTransfAlvo] = useState<TransacaoBancaria | null>(null);
+  const [transfExtrato, setTransfExtrato] = useState<ExtratoBancario | null>(null);
+  const [transfOrigem, setTransfOrigem] = useState("");
+  const [transfDestino, setTransfDestino] = useState("");
+  const [transfData, setTransfData] = useState("");
+  const [transfValor, setTransfValor] = useState("");
+  const [transfObs, setTransfObs] = useState("");
+  const [transfErro, setTransfErro] = useState("");
+  const [transfSalvando, setTransfSalvando] = useState(false);
+
   const [loteOpen, setLoteOpen] = useState(false);
   const [loteCategoriaId, setLoteCategoriaId] = useState("");
   const [loteErro, setLoteErro] = useState("");
@@ -200,17 +200,22 @@ function Inner({ empresaId }: { empresaId: string }) {
   const extratoResumo = useMemo(() => {
     const counts = new Map<string, number>();
     const conciliadasMap = new Map<string, number>();
+    const transferenciasMap = new Map<string, number>();
     for (const t of transacoes) {
       if (!t.extratoId) continue;
       counts.set(t.extratoId, (counts.get(t.extratoId) ?? 0) + 1);
       if (t.statusConciliacao === "conciliada") {
         conciliadasMap.set(t.extratoId, (conciliadasMap.get(t.extratoId) ?? 0) + 1);
       }
+      if (t.transferenciaId) {
+        transferenciasMap.set(t.extratoId, (transferenciasMap.get(t.extratoId) ?? 0) + 1);
+      }
     }
     return extratos.map((e) => ({
       ...e,
       qtdTransacoes: counts.get(e.id) ?? 0,
       qtdConciliadas: conciliadasMap.get(e.id) ?? 0,
+      qtdTransferencias: transferenciasMap.get(e.id) ?? 0,
     }));
   }, [extratos, transacoes]);
 
@@ -249,14 +254,10 @@ function Inner({ empresaId }: { empresaId: string }) {
 
   const categoriaLancarOptions = useMemo(
     () =>
-      categoriasLancar.map((c) => ({
-        value: c.id,
-        label:
-          c.grupoId && grupoCatMap.get(c.grupoId)
-            ? `${grupoCatMap.get(c.grupoId)} › ${c.nome}`
-            : c.nome,
-      })),
-    [categoriasLancar, grupoCatMap]
+      [...categoriasLancar]
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        .map((c) => ({ value: c.id, label: c.nome })),
+    [categoriasLancar]
   );
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -375,21 +376,18 @@ function Inner({ empresaId }: { empresaId: string }) {
     );
     if (match) applyParceiroLancar(match.nome);
     try {
-      const [contas, cats, centrosAtivos, grupos] = await Promise.all([
+      const [contas, cats, centrosAtivos] = await Promise.all([
         contaFinanceiraService.listAtivas(empresaId),
         categoriaService.list(empresaId),
         centroCustoService.listAtivos(empresaId),
-        categoriaGrupoService.list(empresaId),
       ]);
       setContasLancar(contas);
       setCategoriasLancarState(cats);
       setCentrosLancar(centrosAtivos);
-      setGruposLancar(grupos);
     } catch (e) {
       setContasLancar([]);
       setCategoriasLancarState([]);
       setCentrosLancar([]);
-      setGruposLancar([]);
       notify((e as Error).message || "Falha ao carregar contas/categorias/centros.", "error");
     }
   }
@@ -528,9 +526,111 @@ function Inner({ empresaId }: { empresaId: string }) {
     try {
       await conciliacaoService.desfazer(empresaId, t.id);
       bumpData();
-      notify("Conciliação desfeita.");
+      notify(
+        t.transferenciaId
+          ? "Conciliação desfeita e a transferência foi excluída."
+          : "Conciliação desfeita."
+      );
     } catch (e) {
       notify((e as Error).message, "error");
+    }
+  }
+
+  function contaDoExtrato(extratoId: string | null): string {
+    if (!extratoId) return "";
+    const extrato = extratos.find((e) => e.id === extratoId);
+    const conta = (extrato?.conta ?? "").replace(/\D/g, "");
+    if (conta.length < 3) return "";
+    const match = contasFinanceiras.find((c) => {
+      const numero = (c.numeroConta ?? "").replace(/\D/g, "");
+      if (numero.length < 3) return false;
+      return numero.endsWith(conta) || conta.endsWith(numero);
+    });
+    return match?.id ?? "";
+  }
+
+  function fecharTransferencia() {
+    setTransfAlvo(null);
+    setTransfExtrato(null);
+  }
+
+  function abrirTransferencia(t: TransacaoBancaria) {
+    const contaId = contaDoExtrato(t.extratoId);
+    setTransfExtrato(null);
+    setTransfAlvo(t);
+    setTransfOrigem(t.tipo === "debito" ? contaId : "");
+    setTransfDestino(t.tipo === "credito" ? contaId : "");
+    setTransfData(t.data);
+    setTransfValor(Math.abs(t.valor).toFixed(2).replace(".", ","));
+    setTransfObs(t.descricao || "");
+    setTransfErro("");
+  }
+
+  function abrirTransferenciaExtrato(e: ExtratoBancario) {
+    const contaId = contaDoExtrato(e.id);
+    setTransfAlvo(null);
+    setTransfExtrato(e);
+    setTransfOrigem(contaId);
+    setTransfDestino("");
+    setTransfData(e.dataFim || e.dataInicio || today());
+    setTransfValor("");
+    setTransfObs("");
+    setTransfErro("");
+  }
+
+  function lerValorTransferencia(): number | null {
+    const raw = transfValor.trim();
+    const normalizado = raw.includes(",") ? raw.replace(/\./g, "").replace(",", ".") : raw;
+    const n = Number(normalizado);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Number(n.toFixed(2));
+  }
+
+  async function confirmarTransferencia() {
+    if (!transfAlvo && !transfExtrato) return;
+    if (!transfOrigem || !transfDestino) {
+      setTransfErro("Escolha a conta de origem e a de destino.");
+      return;
+    }
+    if (transfOrigem === transfDestino) {
+      setTransfErro("A conta de origem e a de destino precisam ser diferentes.");
+      return;
+    }
+    if (!transfData) {
+      setTransfErro("Informe a data.");
+      return;
+    }
+    const valor = lerValorTransferencia();
+    if (valor == null) {
+      setTransfErro("Informe um valor maior que zero.");
+      return;
+    }
+    setTransfSalvando(true);
+    try {
+      if (transfAlvo) {
+        await conciliacaoService.lancarTransferencia(empresaId, transfAlvo.id, {
+          contaOrigemId: transfOrigem,
+          contaDestinoId: transfDestino,
+          data: transfData,
+          valor,
+          observacao: transfObs,
+        });
+      } else if (transfExtrato) {
+        await transferenciaService.create(empresaId, {
+          contaOrigemId: transfOrigem,
+          contaDestinoId: transfDestino,
+          data: transfData,
+          valor,
+          observacao: transfObs.trim(),
+        });
+      }
+      bumpData();
+      fecharTransferencia();
+      notify("Transferência registrada. Ela não entra em contas a pagar nem a receber.");
+    } catch (e) {
+      notify((e as Error).message, "error");
+    } finally {
+      setTransfSalvando(false);
     }
   }
 
@@ -606,11 +706,24 @@ function Inner({ empresaId }: { empresaId: string }) {
                           {e.qtdConciliadas} conciliada{e.qtdConciliadas > 1 ? "s" : ""}
                         </div>
                       )}
+                      {e.qtdTransferencias > 0 && (
+                        <div className="text-[11px] text-muted-foreground">
+                          {e.qtdTransferencias} transferência{e.qtdTransferencias > 1 ? "s" : ""}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">{formatDate(e.createdAt.slice(0, 10))}</td>
                     {!readOnly && (
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            className="btn-ghost btn-sm"
+                            title="É transferência"
+                            onClick={() => abrirTransferenciaExtrato(e)}
+                          >
+                            <ArrowLeftRight className="h-4 w-4" />
+                          </button>
                           <button
                             type="button"
                             className="btn-ghost btn-sm"
@@ -713,6 +826,10 @@ function Inner({ empresaId }: { empresaId: string }) {
                       <EntityLink type="conta-receber" id={t.contaReceberId} />
                     ) : t.contaPagarId ? (
                       <EntityLink type="conta-pagar" id={t.contaPagarId} />
+                    ) : t.transferenciaId ? (
+                      <Link to="/transferencias" className="text-xs font-medium text-primary hover:underline">
+                        Transferência entre contas
+                      </Link>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
@@ -745,6 +862,13 @@ function Inner({ empresaId }: { empresaId: string }) {
                           >
                             <Ban className="h-4 w-4" />
                           </button>
+                          <button
+                            className="btn-ghost btn-sm"
+                            title="É transferência"
+                            onClick={() => abrirTransferencia(t)}
+                          >
+                            <ArrowLeftRight className="h-4 w-4" />
+                          </button>
                         </>
                       )}
                       {!readOnly && t.statusConciliacao !== "pendente" && (
@@ -764,6 +888,111 @@ function Inner({ empresaId }: { empresaId: string }) {
           </table>
         </div>
       )}
+
+      <Modal
+        open={!!transfAlvo || !!transfExtrato}
+        title="Nova transferência"
+        onClose={() => !transfSalvando && fecharTransferencia()}
+        footer={
+          <>
+            <button
+              className="btn-outline"
+              disabled={transfSalvando}
+              onClick={fecharTransferencia}
+            >
+              Cancelar
+            </button>
+            <button
+              className="btn-primary"
+              disabled={transfSalvando}
+              onClick={() => void confirmarTransferencia()}
+            >
+              {transfSalvando ? "Salvando…" : "Salvar"}
+            </button>
+          </>
+        }
+      >
+        {(transfAlvo || transfExtrato) && (
+          <div className="space-y-4">
+            {transfAlvo ? (
+              <>
+                <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">{formatDate(transfAlvo.data)}</span>
+                    <span className={transfAlvo.tipo === "credito" ? "text-emerald-600" : "text-red-600"}>
+                      {formatBRL(transfAlvo.valor)}
+                    </span>
+                  </div>
+                  <div className="font-medium">{transfAlvo.descricao || "—"}</div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {transfAlvo.tipo === "debito"
+                    ? "Saída no extrato: a conta deste banco é a origem. Escolha para onde o valor foi."
+                    : "Entrada no extrato: a conta deste banco é o destino. Escolha de onde o valor veio."}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+                  <div className="font-medium">
+                    {transfExtrato?.banco || "—"} {transfExtrato?.conta || ""}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {transfExtrato?.dataInicio && transfExtrato.dataFim
+                      ? `${formatDate(transfExtrato.dataInicio)} — ${formatDate(transfExtrato.dataFim)}`
+                      : "Extrato importado"}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Informe de onde o valor veio e para onde foi. A conta deste extrato entra como origem; troque os lados se o dinheiro entrou nela.
+                </p>
+              </>
+            )}
+            <Field label="Conta de origem" required>
+              <Select
+                value={transfOrigem}
+                onChange={setTransfOrigem}
+                placeholder="Selecione"
+                options={contasFinanceiras.map((c) => ({
+                  value: c.id,
+                  label: labelContaFinanceira(c),
+                }))}
+              />
+            </Field>
+            <Field label="Conta de destino" required>
+              <Select
+                value={transfDestino}
+                onChange={setTransfDestino}
+                placeholder="Selecione"
+                options={contasFinanceiras.map((c) => ({
+                  value: c.id,
+                  label: labelContaFinanceira(c),
+                }))}
+              />
+            </Field>
+            <Field label="Data" required>
+              <DatePicker value={transfData} onChange={setTransfData} />
+            </Field>
+            <Field label="Valor" required>
+              <input
+                className="input"
+                inputMode="decimal"
+                value={transfValor}
+                onChange={(e) => setTransfValor(e.target.value)}
+                placeholder="0,00"
+              />
+            </Field>
+            <Field label="Observações">
+              <textarea
+                className="input min-h-[5rem]"
+                value={transfObs}
+                onChange={(e) => setTransfObs(e.target.value)}
+              />
+            </Field>
+            {transfErro && <p className="text-sm text-destructive">{transfErro}</p>}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         open={!!alvo}
@@ -923,21 +1152,20 @@ function Inner({ empresaId }: { empresaId: string }) {
                   error={lancarErro || undefined}
                   hint={
                     categoriasLancar.length === 0
-                      ? `Nenhuma categoria-folha de ${tipoCategoriaLancar} ativa. Os itens em “Grupos (DRE)” não entram no lançamento — cadastre uma categoria do tipo ${tipoCategoriaLancar}.`
-                      : `Categorias-folha de ${tipoCategoriaLancar} (não grupos DRE).`
+                      ? `Nenhuma categoria de ${tipoCategoriaLancar} ativa. Cadastre uma categoria do tipo ${tipoCategoriaLancar}.`
+                      : "Digite o nome para filtrar. A lista mostra só a categoria."
                   }
                   className="sm:col-span-2"
                 >
-                  <Select
+                  <SearchableSelect
                     value={lancarCategoriaId}
                     onChange={(v) => {
                       setLancarCategoriaId(v);
                       setLancarErro("");
                     }}
-                    options={[
-                      { value: "", label: "— selecione —" },
-                      ...categoriaLancarOptions,
-                    ]}
+                    placeholder="Buscar categoria…"
+                    searchPlaceholder="Digite o nome da categoria…"
+                    options={categoriaLancarOptions}
                   />
                 </Field>
 

@@ -214,6 +214,7 @@ export interface TransacaoBancaria extends OwnedEntity {
   statusConciliacao: ConciliacaoStatus;
   contaPagarId: string | null;
   contaReceberId: string | null;
+  transferenciaId: string | null;
 }
 
 export interface RegraConciliacao extends OwnedEntity {

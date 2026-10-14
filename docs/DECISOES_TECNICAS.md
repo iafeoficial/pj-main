@@ -242,6 +242,17 @@ pode ser corrigido, e a mesma pessoa pode ser cliente e fornecedor.
 **Implementação:** migration `0025_documento_unico_parceiro.sql`;
 `exigirDocumentoLivre` em `src/data/cadastros.ts`.
 
+## ADR-025 — Extrato conciliado como transferência
+**Decisão:** na conciliação, uma linha pendente pode virar transferência entre contas.
+O formulário pede conta de origem e conta de destino, como em `/transferencias`.
+A linha fica conciliada e ligada a `transferencias_contas`. Desfazer ou apagar a
+transferência devolve a linha do extrato para pendente. Não nasce conta a pagar
+nem a receber.
+**Motivo:** um rendimento ou TED no extrato pode ser só movimento entre contas
+da mesma empresa.
+**Implementação:** migration `0026_transacao_transferencia.sql`;
+`conciliacaoService.lancarTransferencia` em `src/data/conciliacao.ts`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

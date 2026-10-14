@@ -4,7 +4,6 @@ import { Pencil, Plus, Trash2, CheckCircle2, Ban, Upload, ArrowLeftRight } from 
 import type { LucideIcon } from "lucide-react";
 import type {
   Categoria,
-  CategoriaGrupo,
   CategoriaTipo,
   CentroCusto,
   Cliente,
@@ -15,7 +14,7 @@ import type {
   RecorrenciaTipo,
   TipoPessoa,
 } from "@/types/domain";
-import { categoriaService, centroCustoService, contaFinanceiraService, categoriaGrupoService } from "@/data/services";
+import { categoriaService, centroCustoService, contaFinanceiraService } from "@/data/services";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
@@ -224,11 +223,6 @@ export function ContasModule({
     [empresaId, version, config.categoriaTipo],
     [] as Categoria[]
   );
-  const { data: gruposCat } = useAsyncData(
-    () => categoriaGrupoService.listAtivos(empresaId, config.categoriaTipo),
-    [empresaId, version, config.categoriaTipo],
-    [] as CategoriaGrupo[]
-  );
   const { data: centros } = useAsyncData(
     () => centroCustoService.listAtivos(empresaId),
     [empresaId, version],
@@ -327,10 +321,6 @@ export function ContasModule({
     () => new Map(todasCategorias.map((c) => [c.id, c.nome])),
     [todasCategorias]
   );
-  const grupoCatMap = useMemo(
-    () => new Map(gruposCat.map((g) => [g.id, g.nome])),
-    [gruposCat]
-  );
   const contaFinMap = useMemo(
     () => new Map(contasFinanceiras.map((c) => [c.id, c])),
     [contasFinanceiras]
@@ -338,14 +328,10 @@ export function ContasModule({
 
   const categoriaOptions = useMemo(
     () =>
-      categorias.map((c) => ({
-        value: c.id,
-        label:
-          c.grupoId && grupoCatMap.get(c.grupoId)
-            ? `${grupoCatMap.get(c.grupoId)} › ${c.nome}`
-            : c.nome,
-      })),
-    [categorias, grupoCatMap]
+      [...categorias]
+        .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        .map((c) => ({ value: c.id, label: c.nome })),
+    [categorias]
   );
 
   const [filtroStatus, setFiltroStatus] = useState<string>("todos");
@@ -528,20 +514,25 @@ export function ContasModule({
     ? "Selecionar cliente ou fornecedor cadastrado"
     : "";
 
+  function parceiroIdDoNome(nome: string): string | null {
+    const p = parceirosCadastro.find((x) => x.nome === nome);
+    if (!p) return null;
+    return config.pessoaCadastro === "fornecedor" ? p.fornecedorId : p.clienteId;
+  }
+
   function applyParceiroSelecionado(nome: string) {
     const p = parceirosCadastro.find((x) => x.nome === nome);
-    const parceiroId = p
-      ? config.pessoaCadastro === "fornecedor"
-        ? p.fornecedorId
-        : p.clienteId
-      : null;
-    setForm((prev) => ({ ...prev, pessoa: nome, parceiroId }));
+    setForm((prev) => ({ ...prev, pessoa: nome, parceiroId: parceiroIdDoNome(nome) }));
     if (p) {
       setPessoaTipoPessoa(p.tipoPessoa);
       setPessoaCnpjCpf(p.cnpjCpf ? formatCpfCnpj(p.cnpjCpf) : "");
     } else {
       setPessoaCnpjCpf("");
     }
+  }
+
+  function setNomeLivre(nome: string) {
+    setForm((prev) => ({ ...prev, pessoa: nome, parceiroId: parceiroIdDoNome(nome) }));
   }
 
   function cadastroDaConta(conta: ContaLike): Cliente | Fornecedor | undefined {
@@ -754,6 +745,15 @@ export function ContasModule({
       if (!preferFornecedor && existingCli) return existingCli.id;
       return null;
     }
+
+    const docNorm = normalizeCNPJ(doc);
+    const docCompleto = docNorm.length === 11 || docNorm.length === 14;
+    const docDeOutro =
+      docCompleto &&
+      [...fornecedoresAtivos, ...clientesAtivos].some(
+        (p) => p.nome !== nomeTrim && normalizeCNPJ(p.cnpjCpf ?? "") === docNorm
+      );
+    if (docDeOutro) return null;
 
     const data = parceiroToPayload({
       ...emptyParceiroForm(),
@@ -1232,7 +1232,7 @@ export function ContasModule({
             >
               {config.pessoaCadastro ? (
                 <div className="space-y-2">
-                  {vincularCadastro ? (
+                  {vincularCadastro && (
                     <SearchableSelect
                       value={form.pessoa}
                       onChange={applyParceiroSelecionado}
@@ -1243,28 +1243,21 @@ export function ContasModule({
                         ...parceiroOptions,
                       ]}
                     />
-                  ) : (
-                    <input
-                      className="input"
-                      value={form.pessoa}
-                      onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
-                      placeholder={getPessoaPlaceholder("generico")}
-                      autoFocus
-                    />
                   )}
+                  <input
+                    className="input"
+                    value={form.pessoa}
+                    onChange={(e) => setNomeLivre(e.target.value)}
+                    placeholder={getPessoaPlaceholder("generico")}
+                    aria-label="Nome"
+                    autoFocus
+                  />
                   <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
                     <input
                       type="checkbox"
                       className="rounded border-border"
                       checked={vincularCadastro}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setVincularCadastro(checked);
-                        if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
-                          setForm({ ...form, pessoa: "", parceiroId: null });
-                          setPessoaCnpjCpf("");
-                        }
-                      }}
+                      onChange={(e) => setVincularCadastro(e.target.checked)}
                     />
                     {vincularCadastroLabel}
                   </label>
@@ -1354,13 +1347,16 @@ export function ContasModule({
                   error={errors.categoriaId}
                   className="sm:col-span-2"
                 >
-                  <Select
+                  <SearchableSelect
                     value={form.categoriaId ?? ""}
                     onChange={handleCategoriaChange}
-                    options={[
-                      { value: "", label: editingId ? "— sem categoria —" : "— selecione —" },
-                      ...categoriaOptions,
-                    ]}
+                    placeholder={editingId ? "— sem categoria —" : "Buscar categoria…"}
+                    searchPlaceholder="Digite o nome da categoria…"
+                    options={
+                      editingId
+                        ? [{ value: "", label: "— sem categoria —" }, ...categoriaOptions]
+                        : categoriaOptions
+                    }
                   />
                 </Field>
                 {!editingId && (
@@ -1384,7 +1380,7 @@ export function ContasModule({
                     >
                       {showVincularCadastro(perfil) && config.pessoaCadastro ? (
                         <div className="space-y-2">
-                          {vincularCadastro ? (
+                          {vincularCadastro && (
                             <SearchableSelect
                               value={form.pessoa}
                               onChange={applyParceiroSelecionado}
@@ -1395,27 +1391,23 @@ export function ContasModule({
                                 ...parceiroOptions,
                               ]}
                             />
-                          ) : (
+                          )}
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground">Nome</span>
                             <input
                               className="input"
                               value={form.pessoa}
-                              onChange={(e) => setForm({ ...form, pessoa: e.target.value, parceiroId: null })}
+                              onChange={(e) => setNomeLivre(e.target.value)}
                               placeholder={getPessoaPlaceholder(perfil)}
+                              aria-label="Nome"
                             />
-                          )}
+                          </div>
                           <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
                             <input
                               type="checkbox"
                               className="rounded border-border"
                               checked={vincularCadastro}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setVincularCadastro(checked);
-                                if (checked && !parceirosCadastro.some((p) => p.nome === form.pessoa)) {
-                                  setForm({ ...form, pessoa: "", parceiroId: null });
-                                  setPessoaCnpjCpf("");
-                                }
-                              }}
+                              onChange={(e) => setVincularCadastro(e.target.checked)}
                             />
                             {vincularCadastroLabel}
                           </label>
