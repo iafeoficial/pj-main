@@ -23,13 +23,23 @@ import { clienteService, fornecedorService } from "@/data/cadastros";
 import { combinaBusca, partesData, partesValor } from "@/lib/busca";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
-import { formatBRL, formatDate, monthRange } from "@/lib/utils";
+import { cn, formatBRL, formatDate, monthRange } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { BuscaCampo } from "@/components/ui/BuscaCampo";
 import { Field } from "@/components/ui/Field";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { Select } from "@/components/ui/Select";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
+import { ContasPagarPainel } from "@/pages/ContasPagarPage";
+import { ContasReceberPainel } from "@/pages/ContasReceberPage";
+
+type AbaFluxo = "fluxo" | "pagar" | "receber";
+
+const ABAS: { id: AbaFluxo; label: string }[] = [
+  { id: "fluxo", label: "Fluxo de caixa" },
+  { id: "pagar", label: "Contas a pagar" },
+  { id: "receber", label: "Contas a receber" },
+];
 
 function Inner({ empresaId }: { empresaId: string }) {
   const { version } = useEmpresa();
@@ -315,6 +325,37 @@ function Inner({ empresaId }: { empresaId: string }) {
   );
 }
 
+function FluxoComAbas({ empresaId }: { empresaId: string }) {
+  const [aba, setAba] = useState<AbaFluxo>("fluxo");
+
+  return (
+    <>
+      <div className="mb-4 flex gap-1 border-b border-border">
+        {ABAS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-sm",
+              aba === item.id
+                ? "border-primary font-medium text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+            onClick={() => setAba(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div className={aba === "fluxo" ? undefined : "hidden"}>
+        <Inner empresaId={empresaId} />
+      </div>
+      {aba === "pagar" && <ContasPagarPainel empresaId={empresaId} />}
+      {aba === "receber" && <ContasReceberPainel empresaId={empresaId} />}
+    </>
+  );
+}
+
 export function FluxoCaixaPage() {
-  return <RequireEmpresa>{(id) => <Inner empresaId={id} />}</RequireEmpresa>;
+  return <RequireEmpresa>{(id) => <FluxoComAbas empresaId={id} />}</RequireEmpresa>;
 }

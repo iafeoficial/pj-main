@@ -98,15 +98,15 @@ const config: ContasConfig = {
     contaPagarService.update(empresaId, id, { transferencia }),
 };
 
+export function ContasPagarPainel({ empresaId }: { empresaId: string }) {
+  const { papel } = useEmpresa();
+  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
+}
+
 export function ContasPagarPage() {
   return (
     <RequireEmpresa>
-      {(id) => <ContasPagarInner empresaId={id} />}
+      {(id) => <ContasPagarPainel empresaId={id} />}
     </RequireEmpresa>
   );
-}
-
-function ContasPagarInner({ empresaId }: { empresaId: string }) {
-  const { papel } = useEmpresa();
-  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
 }

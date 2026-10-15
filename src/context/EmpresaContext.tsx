@@ -56,6 +56,7 @@ export function EmpresaProvider({ children }: { children: ReactNode }) {
     // Spinner só no boot; refresh em background (token / manual) não desmonta filhos.
     if (!initialLoadDone.current) setLoading(true);
     try {
+      await membroService.vincularEmailIafe();
       const [lista, assoc] = await Promise.all([
         empresaService.list(),
         membroService.minhasAssociacoes(userId),

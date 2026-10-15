@@ -36,6 +36,17 @@ export const membroService = {
     return (data ?? []).map((r) => rowToEntity<Membro>(r));
   },
 
+  /**
+   * Se o e-mail logado for @iafeoficial.com, garante membership de administrador
+   * na IAFE TECNOLOGIA. Não faz nada para outros domínios.
+   */
+  async vincularEmailIafe(): Promise<void> {
+    const { error } = await db().rpc("vincular_email_iafe_atual");
+    if (error && !/vincular_email_iafe_atual|schema cache/i.test(error.message)) {
+      throw new Error(error.message);
+    }
+  },
+
   /** Papéis do usuário atual por empresa (para o contexto). */
   async minhasAssociacoes(userId: string): Promise<{ empresaId: string; papel: Papel }[]> {
     const { data, error } = await db()

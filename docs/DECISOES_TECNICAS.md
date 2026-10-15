@@ -256,6 +256,15 @@ da mesma empresa.
 **Implementação:** migration `0026_transacao_transferencia.sql`;
 `conciliacaoService.lancarTransferencia` em `src/data/conciliacao.ts`.
 
+## ADR-026 — E-mail @iafeoficial.com entra na IAFE TECNOLOGIA
+**Decisão:** quem se cadastra com e-mail `@iafeoficial.com` vira administrador da empresa
+`IAFE TECNOLOGIA LTDA`, a mesma em que a Denise já lançou o movimento. Outros domínios
+continuam sem esse acesso e entram só por convite.
+**Motivo:** uma conta nova da IAFE não pode abrir uma empresa vazia e deixar de ver as
+contas que já existem.
+**Implementação:** migration `0027_acesso_email_iafe.sql` (backfill, trigger no cadastro
+e RPC `vincular_email_iafe_atual`); chamada em `EmpresaContext` ao entrar.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

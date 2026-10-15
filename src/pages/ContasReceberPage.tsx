@@ -71,15 +71,15 @@ const config: ContasConfig = {
     contaReceberService.update(empresaId, id, { transferencia }),
 };
 
+export function ContasReceberPainel({ empresaId }: { empresaId: string }) {
+  const { papel } = useEmpresa();
+  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
+}
+
 export function ContasReceberPage() {
   return (
     <RequireEmpresa>
-      {(id) => <ContasReceberInner empresaId={id} />}
+      {(id) => <ContasReceberPainel empresaId={id} />}
     </RequireEmpresa>
   );
-}
-
-function ContasReceberInner({ empresaId }: { empresaId: string }) {
-  const { papel } = useEmpresa();
-  return <ContasModule empresaId={empresaId} config={config} readOnly={!canWrite(papel)} />;
 }
