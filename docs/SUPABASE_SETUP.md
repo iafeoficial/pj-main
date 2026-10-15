@@ -39,6 +39,14 @@ As políticas RLS exigem um usuário autenticado (`auth.uid()`). A tela de login
 troca da camada de dados local pela Supabase são uma tarefa dedicada — será feita após você
 enviar `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`, e validada isoladamente (build/lint/teste).
 
-## 6. Verificação rápida
+## 6. Recuperação de senha
+Na tela de login, **Esqueci minha senha** chama `resetPasswordForEmail` do Supabase. O
+usuário recebe um link no e-mail cadastrado e, ao abrir, define a nova senha na própria
+aplicação (`updateUser`).
+
+Em **Authentication → URL Configuration**, a URL do app (local e a do Coolify) precisa
+estar em **Redirect URLs**. O link deve ser aberto no mesmo navegador em que foi pedido.
+
+## 7. Verificação rápida
 Depois de preencher o `.env`, rode `npm run dev`. O helper `isSupabaseConfigured()`
 (`src/lib/supabase.ts`) passa a retornar `true`, habilitando a futura origem de dados Supabase.

@@ -37,7 +37,7 @@ import { AuditoriaPage } from "@/pages/AuditoriaPage";
 import { RequireCapability } from "@/components/RequireCapability";
 
 function Gate() {
-  const { session, loading } = useAuth();
+  const { session, loading, passwordRecovery } = useAuth();
 
   if (loading) {
     return (
@@ -47,7 +47,7 @@ function Gate() {
     );
   }
 
-  if (!session) return <LoginPage />;
+  if (!session || passwordRecovery) return <LoginPage />;
 
   return (
     <EmpresaProvider>
