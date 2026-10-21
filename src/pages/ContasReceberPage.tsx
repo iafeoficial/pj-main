@@ -30,6 +30,10 @@ const config: ContasConfig = {
       contaFinanceiraId: c.contaFinanceiraId,
       valor: c.valor,
       valorBaixado: c.valorRecebido,
+      parcelaNumero: c.parcelaNumero,
+      parcelaTotal: c.parcelaTotal,
+      recorrencia: c.recorrencia,
+      recorrenciaDias: c.recorrenciaDias,
       dataCompetencia: c.dataCompetencia,
       dataVencimento: c.dataVencimento,
       dataBaixa: c.dataRecebimento,
@@ -49,6 +53,14 @@ const config: ContasConfig = {
       dataVencimento: input.dataVencimento,
       status: input.status,
       observacao: input.observacao,
+      parcelas: input.parcelas,
+      recorrencia: input.recorrencia ?? null,
+      recorrenciaDias:
+        input.recorrencia === "personalizada"
+          ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias || 30)))
+          : null,
+      recorrenciaOcorrencias: input.recorrenciaOcorrencias,
+      ajusteDiaNaoUtil: input.ajusteDiaNaoUtil,
     }),
   update: (empresaId, id, input) =>
     contaReceberService.update(empresaId, id, {

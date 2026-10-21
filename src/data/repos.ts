@@ -10,6 +10,7 @@ import type {
   Documento,
   Empresa,
   EstoqueMovimento,
+  Feriado,
   ExtratoBancario,
   Fornecedor,
   CategoriaGrupo,
@@ -30,6 +31,7 @@ export const empresaTable = new GlobalTable<Empresa>("empresas");
 export const categoriaTable = new OwnedTable<Categoria>("categorias");
 export const categoriaGrupoTable = new OwnedTable<CategoriaGrupo>("categoria_grupos");
 export const centroCustoTable = new OwnedTable<CentroCusto>("centros_custo");
+export const feriadoTable = new OwnedTable<Feriado>("feriados");
 export const contaFinanceiraTable = new OwnedTable<ContaFinanceira>("contas_financeiras");
 export const contaPagarTable = new OwnedTable<ContaPagar>("contas_pagar");
 export const pagamentoContaTable = new OwnedTable<PagamentoConta>("pagamentos_conta");

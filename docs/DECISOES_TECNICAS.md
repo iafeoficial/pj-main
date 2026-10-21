@@ -265,6 +265,40 @@ contas que já existem.
 **Implementação:** migration `0027_acesso_email_iafe.sql` (backfill, trigger no cadastro
 e RPC `vincular_email_iafe_atual`); chamada em `EmpresaContext` ao entrar.
 
+## ADR-027 — Parcelamento e repetição em Contas a Receber
+**Decisão:** `contas_receber` ganha as mesmas colunas de série de `contas_pagar`
+(`parcela_numero`/`parcela_total`/`grupo_parcelamento`, `recorrencia`/`recorrencia_dias`/
+`grupo_recorrencia`). Na criação, N parcelas dividem o valor em títulos mensais; a
+repetição gera títulos futuros. Desconto, juros, NF, impostos e histórico de baixa
+continuam só em pagar.
+**Motivo:** o recebimento também chega parcelado (ex.: entrada de capital em 3x).
+**Implementação:** migration `0028_contas_receber_parcelas.sql`;
+`contaReceberService.create`; aba “Parcelas / repetição” no ContasModule.
+
+## ADR-028 — Vencimento em dia útil
+**Decisão:** na criação de contas a pagar e a receber (título único, parcelas e
+repetição), o vencimento que cair em sábado, domingo ou feriado nacional pode
+**atrasar**, **antecipar** ou **manter**. Padrão: atrasar. Feriados nacionais
+são calculados (fixos + móveis pela Páscoa). A empresa cadastra estaduais e
+municipais em `/feriados` (`repete_anual`). Se o dia 30/31 não existe no mês
+(fevereiro, abril etc.), usa o último dia do mês; o ajuste de dia útil **não
+sai desse mês**. Só o vencimento muda; a competência permanece.
+**Implementação:** `src/lib/diaUtil.ts`; migration `0029_feriados.sql`;
+`feriadoService`; aba Parcelas no ContasModule e na conciliação.
+
+## ADR-029 — Filtros persistentes e tipo na importação OFX
+**Decisão:** os filtros de Contas a Pagar/Receber (período, busca, status) ficam no
+`localStorage` do navegador, chave por empresa e lado, até o usuário mudar. Na
+importação OFX o usuário informa se o extrato é **conta corrente** (padrão) ou
+**cartão**; vários arquivos na mesma seleção recebem o mesmo tipo. Coluna
+`extratos_bancarios.conta_tipo` (enum `conta_financeira_tipo`). Não há FK para
+`contas_financeiras`: o vínculo com a conta cadastrada continua na hora de lançar
+ou transferir. `contaDoExtrato` prefere contas daquele tipo e cai no número do OFX.
+**Motivo:** o período de trabalho se perde ao sair da tela; o OFX não diz se é
+conta ou fatura, e o lote de arquivos costuma ser da mesma origem.
+**Implementação:** `usePersistedState`; `ContasModule`; migration
+`0030_extrato_conta_tipo.sql`; modal em `ConciliacaoPage`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

@@ -71,6 +71,7 @@ const config: ContasConfig = {
           ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias || 30)))
           : null,
       recorrenciaOcorrencias: input.recorrenciaOcorrencias,
+      ajusteDiaNaoUtil: input.ajusteDiaNaoUtil,
     }),
   update: (empresaId, id, input) =>
     contaPagarService.update(empresaId, id, {

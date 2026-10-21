@@ -1,4 +1,6 @@
 import type { ImpostosRetidos, ImpostoRetido, RecorrenciaTipo } from "@/types/domain";
+import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
+import { AJUSTE_DIA_NAO_UTIL_OPTS } from "@/lib/diaUtil";
 import { IMPOSTOS_RETIDOS } from "@/types/domain";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
@@ -81,6 +83,7 @@ export function ParcelasRepeticaoFields({
   recorrencia,
   recorrenciaDias,
   recorrenciaOcorrencias,
+  ajusteDiaNaoUtil,
   editing,
   onChange,
 }: {
@@ -88,12 +91,14 @@ export function ParcelasRepeticaoFields({
   recorrencia: RecorrenciaTipo | null;
   recorrenciaDias: number;
   recorrenciaOcorrencias: number;
+  ajusteDiaNaoUtil: AjusteDiaNaoUtil;
   editing: boolean;
   onChange: (partial: {
     parcelas?: number;
     recorrencia?: RecorrenciaTipo | null;
     recorrenciaDias?: number;
     recorrenciaOcorrencias?: number;
+    ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
   }) => void;
 }) {
   if (editing) {
@@ -195,6 +200,17 @@ export function ParcelasRepeticaoFields({
           />
         </Field>
       )}
+      <Field
+        label="Se cair em sábado, domingo ou feriado"
+        hint="Fevereiro e meses sem dia 31 ficam no último dia do mês; o ajuste não sai desse mês."
+        className="sm:col-span-2"
+      >
+        <Select
+          value={ajusteDiaNaoUtil}
+          onChange={(v) => onChange({ ajusteDiaNaoUtil: (v as AjusteDiaNaoUtil) || "atrasar" })}
+          options={AJUSTE_DIA_NAO_UTIL_OPTS.map((o) => ({ value: o.value, label: o.label }))}
+        />
+      </Field>
     </div>
   );
 }

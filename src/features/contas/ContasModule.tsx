@@ -18,6 +18,7 @@ import { categoriaService, centroCustoService, contaFinanceiraService } from "@/
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
+import { usePersistedState } from "@/hooks/usePersistedState";
 import { formatBRL, formatDate, isValidCNPJ, isValidCPF, normalizeCNPJ, today } from "@/lib/utils";
 import { combinaBusca, partesData, partesValor } from "@/lib/busca";
 import { formatCpfCnpj } from "@/lib/masks";
@@ -38,6 +39,7 @@ import { parseContaOrigem, resolveIdByPrefix } from "@/lib/entityLinks";
 import { proximoVencimentoFatura } from "@/lib/fatura";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { totalImpostosRetidos } from "@/lib/contaPagarExtras";
+import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
 import { compraService, vendaService } from "@/data/operacao";
 import { confirmarMovimentacao, previewMovimentacao } from "@/data/importacaoFinanceira";
 import type { PreviewMovimentacao } from "@/lib/movimentacaoPlanilha";
@@ -104,7 +106,7 @@ export interface ContasConfig {
   categoriaTipo: CategoriaTipo; // despesa | receita
   /** Exibe o select de conta/cartão (Contas a Pagar). */
   usaContaFinanceira?: boolean;
-  /** Campos extras Fase 2 (só Contas a Pagar). */
+  /** Campos extras Fase 2 (só Contas a Pagar): impostos, NF, desconto/juros, histórico. */
   extrasPagar?: boolean;
   baixaLabel: string; // "Registrar pagamento" | "Registrar recebimento"
   statusBaixado: string; // "paga" | "recebida"
@@ -140,9 +142,30 @@ export interface ContaFormData {
   /** Dias entre títulos quando recorrência = personalizada. */
   recorrenciaDias: number;
   recorrenciaOcorrencias: number;
+  ajusteDiaNaoUtil: AjusteDiaNaoUtil;
 }
 
 type FormTab = "dados" | "impostos" | "parcelas" | "historico";
+
+type ContasFiltros = {
+  status: string;
+  busca: string;
+  inicio: string;
+  fim: string;
+};
+
+const FILTROS_VAZIOS: ContasFiltros = { status: "todos", busca: "", inicio: "", fim: "" };
+
+function normalizarFiltros(raw: ContasFiltros): ContasFiltros {
+  const iso = (s: string) => (/^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "");
+  const status = typeof raw.status === "string" && raw.status.trim() ? raw.status : "todos";
+  return {
+    status,
+    busca: typeof raw.busca === "string" ? raw.busca : "",
+    inicio: iso(typeof raw.inicio === "string" ? raw.inicio : ""),
+    fim: iso(typeof raw.fim === "string" ? raw.fim : ""),
+  };
+}
 
 const EMPTY_FORM = (): ContaFormData => ({
   pessoa: "",
@@ -163,6 +186,7 @@ const EMPTY_FORM = (): ContaFormData => ({
   recorrencia: null,
   recorrenciaDias: 30,
   recorrenciaOcorrencias: 1,
+  ajusteDiaNaoUtil: "atrasar",
 });
 
 function ListaMovimento({
@@ -334,10 +358,12 @@ export function ContasModule({
     [categorias]
   );
 
-  const [filtroStatus, setFiltroStatus] = useState<string>("todos");
-  const [busca, setBusca] = useState("");
-  const [inicio, setInicio] = useState("");
-  const [fim, setFim] = useState("");
+  const [filtrosRaw, setFiltros] = usePersistedState<ContasFiltros>(
+    `financas_pj:filtros:contas:${empresaId}:${config.categoriaTipo}`,
+    FILTROS_VAZIOS
+  );
+  const filtros = normalizarFiltros(filtrosRaw);
+  const { status: filtroStatus, busca, inicio, fim } = filtros;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -627,6 +653,7 @@ export function ContasModule({
       recorrencia: c.recorrencia ?? null,
       recorrenciaDias: c.recorrenciaDias ?? 30,
       recorrenciaOcorrencias: 1,
+      ajusteDiaNaoUtil: "atrasar",
     });
     setErrors({});
     const linked = resolveVincularCadastro(c.pessoa);
@@ -939,22 +966,28 @@ export function ContasModule({
 
       <div className="card mb-3 flex flex-wrap items-end gap-4 p-4">
         <Field label="Início">
-          <DatePicker value={inicio} onChange={setInicio} />
+          <DatePicker
+            value={inicio}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), inicio: v }))}
+          />
         </Field>
         <Field label="Fim">
-          <DatePicker value={fim} onChange={setFim} />
+          <DatePicker
+            value={fim}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), fim: v }))}
+          />
         </Field>
         <div className="min-w-[16rem] flex-1">
-          <BuscaCampo value={busca} onChange={setBusca} />
+          <BuscaCampo
+            value={busca}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), busca: v }))}
+          />
         </div>
         {(inicio || fim) && (
           <button
             type="button"
             className="btn-ghost btn-sm"
-            onClick={() => {
-              setInicio("");
-              setFim("");
-            }}
+            onClick={() => setFiltros((f) => ({ ...normalizarFiltros(f), inicio: "", fim: "" }))}
           >
             Limpar período
           </button>
@@ -965,7 +998,7 @@ export function ContasModule({
         {STATUS_OPTS.map((s) => (
           <button
             key={s}
-            onClick={() => setFiltroStatus(s)}
+            onClick={() => setFiltros((f) => ({ ...normalizarFiltros(f), status: s }))}
             className={`badge cursor-pointer capitalize ${
               filtroStatus === s
                 ? "bg-primary text-primary-foreground"
@@ -1201,7 +1234,7 @@ export function ContasModule({
               : "Novo lançamento — dados"
         }
         onClose={closeModal}
-        width={config.extrasPagar ? "max-w-2xl" : "max-w-xl"}
+        width="max-w-2xl"
         footer={
           !editingId && wizardStep === 1 ? (
             <>
@@ -1311,35 +1344,35 @@ export function ContasModule({
           </div>
         ) : (
           <div className="space-y-4">
-            {config.extrasPagar && (
-              <div className="flex flex-wrap gap-1 border-b border-border pb-2">
-                {(
-                  [
-                    { id: "dados" as const, label: "Dados" },
-                    { id: "impostos" as const, label: "Impostos" },
-                    { id: "parcelas" as const, label: "Parcelas / repetição" },
-                    ...(editingId
-                      ? [{ id: "historico" as const, label: "Histórico" }]
-                      : []),
-                  ] satisfies { id: FormTab; label: string }[]
-                ).map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setFormTab(tab.id)}
-                    className={`rounded-md px-3 py-1.5 text-sm ${
-                      formTab === tab.id
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-1 border-b border-border pb-2">
+              {(
+                [
+                  { id: "dados" as const, label: "Dados" },
+                  ...(config.extrasPagar
+                    ? [{ id: "impostos" as const, label: "Impostos" }]
+                    : []),
+                  { id: "parcelas" as const, label: "Parcelas / repetição" },
+                  ...(config.extrasPagar && editingId
+                    ? [{ id: "historico" as const, label: "Histórico" }]
+                    : []),
+                ] satisfies { id: FormTab; label: string }[]
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setFormTab(tab.id)}
+                  className={`rounded-md px-3 py-1.5 text-sm ${
+                    formTab === tab.id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
 
-            {(!config.extrasPagar || formTab === "dados") && (
+            {formTab === "dados" && (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field
                   label="Categoria"
@@ -1591,12 +1624,13 @@ export function ContasModule({
               />
             )}
 
-            {config.extrasPagar && formTab === "parcelas" && (
+            {formTab === "parcelas" && (
               <ParcelasRepeticaoFields
                 parcelas={form.parcelas}
                 recorrencia={form.recorrencia}
                 recorrenciaDias={form.recorrenciaDias}
                 recorrenciaOcorrencias={form.recorrenciaOcorrencias}
+                ajusteDiaNaoUtil={form.ajusteDiaNaoUtil ?? "atrasar"}
                 editing={!!editingId}
                 onChange={(partial) => setForm({ ...form, ...partial })}
               />

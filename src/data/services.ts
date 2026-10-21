@@ -15,11 +15,17 @@ import type {
 import { today, uid } from "@/lib/utils";
 import {
   addMonthsIso,
-  avancarRecorrencia,
   splitParcelas,
   valorDevido,
 } from "@/lib/contaPagarExtras";
+import {
+  ajustarDiaUtil,
+  vencimentoOcorrencia,
+  vencimentoParcela,
+  type AjusteDiaNaoUtil,
+} from "@/lib/diaUtil";
 import { getCurrentUser, logAudit } from "./audit";
+import { feriadoService } from "./feriados";
 import {
   categoriaGrupoTable,
   categoriaTable,
@@ -300,6 +306,7 @@ type ContaPagarInput = Omit<
   /** Ao criar com `recorrencia`: quantas ocorrências gerar (inclui a primeira). */
   recorrenciaOcorrencias?: number;
   transferencia?: boolean;
+  ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
 };
 
 function normalizePagarExtras(data: ContaPagarInput) {
@@ -331,10 +338,12 @@ async function insertPagar(
   const {
     parcelas: _p,
     recorrenciaOcorrencias: _r,
+    ajusteDiaNaoUtil: _a,
     ...rest
   } = data;
   void _p;
   void _r;
+  void _a;
   return contaPagarTable.create(empresaId, {
     ...rest,
     ...extras,
@@ -366,6 +375,8 @@ export const contaPagarService = {
   async create(empresaId: string, data: ContaPagarInput): Promise<ContaPagar> {
     const parcelas = Math.max(1, Math.floor(data.parcelas ?? 1));
     const ocorrencias = Math.max(1, Math.floor(data.recorrenciaOcorrencias ?? 1));
+    const ajuste: AjusteDiaNaoUtil = data.ajusteDiaNaoUtil ?? "atrasar";
+    const feriados = await feriadoService.extras(empresaId);
 
     if (parcelas > 1) {
       const grupo = uid();
@@ -377,7 +388,7 @@ export const contaPagarService = {
           parcelaNumero: i + 1,
           parcelaTotal: parcelas,
           grupoParcelamento: grupo,
-          dataVencimento: addMonthsIso(data.dataVencimento, i),
+          dataVencimento: vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
           dataCompetencia: addMonthsIso(data.dataCompetencia, i),
           recorrencia: null,
           recorrenciaDias: null,
@@ -404,16 +415,27 @@ export const contaPagarService = {
       }
       const grupo = uid();
       const criadas: ContaPagar[] = [];
-      let venc = data.dataVencimento;
-      let comp = data.dataCompetencia;
       const dias =
         data.recorrencia === "personalizada"
           ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
           : null;
       for (let i = 0; i < ocorrencias; i++) {
         const c = await insertPagar(empresaId, data, {
-          dataVencimento: venc,
-          dataCompetencia: comp,
+          dataVencimento: vencimentoOcorrencia(
+            data.dataVencimento,
+            i,
+            data.recorrencia,
+            dias,
+            ajuste,
+            feriados
+          ),
+          dataCompetencia: vencimentoOcorrencia(
+            data.dataCompetencia,
+            i,
+            data.recorrencia,
+            dias,
+            "manter"
+          ),
           recorrencia: data.recorrencia,
           recorrenciaDias: dias,
           grupoRecorrencia: grupo,
@@ -422,8 +444,6 @@ export const contaPagarService = {
           grupoParcelamento: null,
         });
         criadas.push(c);
-        venc = avancarRecorrencia(venc, data.recorrencia, dias);
-        comp = avancarRecorrencia(comp, data.recorrencia, dias);
       }
       const rotulo =
         data.recorrencia === "personalizada"
@@ -439,7 +459,9 @@ export const contaPagarService = {
       return criadas[0];
     }
 
-    const c = await insertPagar(empresaId, data);
+    const c = await insertPagar(empresaId, data, {
+      dataVencimento: ajustarDiaUtil(data.dataVencimento, ajuste, feriados),
+    });
     await logAudit({
       empresaId,
       entidade: "ContaPagar",
@@ -555,13 +577,67 @@ type ContaReceberInput = Omit<
   | "contaFinanceiraId"
   | "clienteId"
   | "transferencia"
+  | "parcelaNumero"
+  | "parcelaTotal"
+  | "grupoParcelamento"
+  | "recorrencia"
+  | "recorrenciaDias"
+  | "grupoRecorrencia"
 > & {
   valorRecebido?: number;
   dataRecebimento?: string | null;
   contaFinanceiraId?: string | null;
   clienteId?: string | null;
   transferencia?: boolean;
+  parcelaNumero?: number | null;
+  parcelaTotal?: number | null;
+  grupoParcelamento?: string | null;
+  recorrencia?: RecorrenciaTipo | null;
+  recorrenciaDias?: number | null;
+  grupoRecorrencia?: string | null;
+  parcelas?: number;
+  recorrenciaOcorrencias?: number;
+  ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
 };
+
+function normalizeReceberSerie(data: ContaReceberInput) {
+  const recorrencia = data.recorrencia ?? null;
+  const dias =
+    recorrencia === "personalizada"
+      ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
+      : null;
+  return {
+    parcelaNumero: data.parcelaNumero ?? null,
+    parcelaTotal: data.parcelaTotal ?? null,
+    grupoParcelamento: data.grupoParcelamento ?? null,
+    recorrencia,
+    recorrenciaDias: dias,
+    grupoRecorrencia: data.grupoRecorrencia ?? null,
+  };
+}
+
+async function insertReceber(
+  empresaId: string,
+  data: ContaReceberInput,
+  overrides: Partial<ContaReceber> = {}
+): Promise<ContaReceber> {
+  const extras = normalizeReceberSerie(data);
+  const { parcelas: _p, recorrenciaOcorrencias: _r, ajusteDiaNaoUtil: _a, ...rest } = data;
+  void _p;
+  void _r;
+  void _a;
+  return contaReceberTable.create(empresaId, {
+    ...rest,
+    ...extras,
+    contaFinanceiraId: data.contaFinanceiraId ?? null,
+    clienteId: data.clienteId ?? null,
+    valorRecebido: data.valorRecebido ?? 0,
+    dataRecebimento: data.dataRecebimento ?? null,
+    transferencia: data.transferencia ?? false,
+    createdBy: getCurrentUser(),
+    ...overrides,
+  } as Omit<ContaReceber, "id" | "createdAt" | "updatedAt" | "empresaId">);
+}
 
 export const contaReceberService = {
   async list(empresaId: string): Promise<ContaReceber[]> {
@@ -573,17 +649,107 @@ export const contaReceberService = {
     const c = await contaReceberTable.find(empresaId, id);
     return c ? withDerivedReceberStatus(c) : undefined;
   },
-  async create(empresaId: string, data: ContaReceberInput) {
-    const c = await contaReceberTable.create(empresaId, {
-      ...data,
-      contaFinanceiraId: data.contaFinanceiraId ?? null,
-      clienteId: data.clienteId ?? null,
-      valorRecebido: data.valorRecebido ?? 0,
-      dataRecebimento: data.dataRecebimento ?? null,
-      transferencia: data.transferencia ?? false,
-      createdBy: getCurrentUser(),
-    } as Omit<ContaReceber, "id" | "createdAt" | "updatedAt" | "empresaId">);
-    await logAudit({ empresaId, entidade: "ContaReceber", entidadeId: c.id, acao: "inclusao", descricao: `Conta a receber de "${c.cliente}" criada.` });
+  /**
+   * Cria um título. Com `parcelas` > 1 gera série parcelada; com `recorrencia` +
+   * `recorrenciaOcorrencias` > 1 gera série recorrente. Parcelamento tem prioridade.
+   */
+  async create(empresaId: string, data: ContaReceberInput): Promise<ContaReceber> {
+    const parcelas = Math.max(1, Math.floor(data.parcelas ?? 1));
+    const ocorrencias = Math.max(1, Math.floor(data.recorrenciaOcorrencias ?? 1));
+    const ajuste: AjusteDiaNaoUtil = data.ajusteDiaNaoUtil ?? "atrasar";
+    const feriados = await feriadoService.extras(empresaId);
+
+    if (parcelas > 1) {
+      const grupo = uid();
+      const valores = splitParcelas(data.valor, parcelas);
+      const criadas: ContaReceber[] = [];
+      for (let i = 0; i < parcelas; i++) {
+        const c = await insertReceber(empresaId, data, {
+          valor: valores[i],
+          parcelaNumero: i + 1,
+          parcelaTotal: parcelas,
+          grupoParcelamento: grupo,
+          dataVencimento: vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
+          dataCompetencia: addMonthsIso(data.dataCompetencia, i),
+          recorrencia: null,
+          recorrenciaDias: null,
+          grupoRecorrencia: null,
+        });
+        criadas.push(c);
+      }
+      await logAudit({
+        empresaId,
+        entidade: "ContaReceber",
+        entidadeId: criadas[0].id,
+        acao: "inclusao",
+        descricao: `Parcelamento (${parcelas}x) de "${data.cliente}" criado.`,
+      });
+      return criadas[0];
+    }
+
+    if (data.recorrencia && ocorrencias > 1) {
+      if (data.recorrencia === "personalizada") {
+        const dias = Math.floor(data.recorrenciaDias ?? 0);
+        if (!dias || dias < 1) {
+          throw new Error("Informe o intervalo em dias para a repetição personalizada.");
+        }
+      }
+      const grupo = uid();
+      const criadas: ContaReceber[] = [];
+      const dias =
+        data.recorrencia === "personalizada"
+          ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
+          : null;
+      for (let i = 0; i < ocorrencias; i++) {
+        const c = await insertReceber(empresaId, data, {
+          dataVencimento: vencimentoOcorrencia(
+            data.dataVencimento,
+            i,
+            data.recorrencia,
+            dias,
+            ajuste,
+            feriados
+          ),
+          dataCompetencia: vencimentoOcorrencia(
+            data.dataCompetencia,
+            i,
+            data.recorrencia,
+            dias,
+            "manter"
+          ),
+          recorrencia: data.recorrencia,
+          recorrenciaDias: dias,
+          grupoRecorrencia: grupo,
+          parcelaNumero: null,
+          parcelaTotal: null,
+          grupoParcelamento: null,
+        });
+        criadas.push(c);
+      }
+      const rotulo =
+        data.recorrencia === "personalizada"
+          ? `a cada ${dias} dia(s)`
+          : data.recorrencia;
+      await logAudit({
+        empresaId,
+        entidade: "ContaReceber",
+        entidadeId: criadas[0].id,
+        acao: "inclusao",
+        descricao: `Série recorrente (${ocorrencias}× ${rotulo}) de "${data.cliente}" criada.`,
+      });
+      return criadas[0];
+    }
+
+    const c = await insertReceber(empresaId, data, {
+      dataVencimento: ajustarDiaUtil(data.dataVencimento, ajuste, feriados),
+    });
+    await logAudit({
+      empresaId,
+      entidade: "ContaReceber",
+      entidadeId: c.id,
+      acao: "inclusao",
+      descricao: `Conta a receber de "${c.cliente}" criada.`,
+    });
     return c;
   },
   async update(empresaId: string, id: string, data: Partial<ContaReceber>) {

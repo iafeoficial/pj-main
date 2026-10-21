@@ -34,6 +34,7 @@ import { CrmPage } from "@/pages/CrmPage";
 import { ComissoesPage } from "@/pages/ComissoesPage";
 import { MembrosPage } from "@/pages/MembrosPage";
 import { AuditoriaPage } from "@/pages/AuditoriaPage";
+import { FeriadosPage } from "@/pages/FeriadosPage";
 import { RequireCapability } from "@/components/RequireCapability";
 
 function Gate() {
@@ -80,6 +81,7 @@ function Gate() {
           <Route path="equipe" element={<RequireCapability cap="admin"><MembrosPage /></RequireCapability>} />
           <Route path="categorias" element={<CategoriasPage />} />
           <Route path="centros-custo" element={<CentrosCustoPage />} />
+          <Route path="feriados" element={<FeriadosPage />} />
           <Route path="contas-cartoes" element={<ContasCartoesPage />} />
           <Route path="auditoria" element={<AuditoriaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

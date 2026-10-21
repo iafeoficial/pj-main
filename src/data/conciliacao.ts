@@ -1,6 +1,7 @@
 // Fase 2 — serviços de Conciliação Bancária (C3 — Supabase, assíncronos).
 import type {
   ConciliacaoStatus,
+  ContaFinanceiraTipo,
   ContaPagar,
   ContaReceber,
   ExtratoBancario,
@@ -10,7 +11,8 @@ import type {
   TransacaoTipo,
 } from "@/types/domain";
 import type { OfxResultado } from "@/lib/ofx";
-import { addMonthsIso, avancarRecorrencia } from "@/lib/contaPagarExtras";
+import { addMonthsIso } from "@/lib/contaPagarExtras";
+import { vencimentoOcorrencia, type AjusteDiaNaoUtil } from "@/lib/diaUtil";
 import { uid } from "@/lib/utils";
 import { logAudit } from "./audit";
 import { extratoTable, regraTable, transacaoTable } from "./repos";
@@ -30,6 +32,7 @@ export type LancarDeTransacaoInput = {
   recorrenciaDias?: number | null;
   /** Inclui a ocorrência baixada do extrato. */
   recorrenciaOcorrencias?: number;
+  ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
 };
 
 export interface ImportResumo {
@@ -81,13 +84,19 @@ export const conciliacaoService = {
   listTransacoes: (empresaId: string) =>
     transacaoTable.list(empresaId, { column: "data", ascending: false }),
 
-  async importarOFX(empresaId: string, ofx: OfxResultado): Promise<ImportResumo> {
+  async importarOFX(
+    empresaId: string,
+    ofx: OfxResultado,
+    opts?: { contaTipo?: ContaFinanceiraTipo; arquivoNome?: string }
+  ): Promise<ImportResumo> {
+    const contaTipo: ContaFinanceiraTipo = opts?.contaTipo ?? "conta_corrente";
     const extrato = await extratoTable.create(empresaId, {
       banco: ofx.banco,
       conta: ofx.conta,
+      contaTipo,
       dataInicio: ofx.dataInicio,
       dataFim: ofx.dataFim,
-      arquivoNome: "",
+      arquivoNome: opts?.arquivoNome ?? "",
     });
 
     const existentes = new Set((await transacaoTable.list(empresaId)).map((t) => t.fitid));
@@ -277,6 +286,7 @@ export const conciliacaoService = {
       recorrencia === "personalizada"
         ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias ?? 1)))
         : null;
+    const ajuste: AjusteDiaNaoUtil = input.ajusteDiaNaoUtil ?? "atrasar";
 
     if (t.tipo === "debito") {
       let primeira: ContaPagar;
@@ -299,6 +309,7 @@ export const conciliacaoService = {
             parcelaNumero: i + 1,
             parcelaTotal: parcelas,
             grupoParcelamento: grupo,
+            ajusteDiaNaoUtil: ajuste,
           });
           criadas.push(c);
         }
@@ -307,8 +318,6 @@ export const conciliacaoService = {
       } else if (recorrencia && ocorrencias > 1) {
         const grupo = uid();
         const criadas: ContaPagar[] = [];
-        let venc = t.data;
-        let comp = t.data;
         for (let i = 0; i < ocorrencias; i++) {
           const c = await contaPagarService.create(empresaId, {
             fornecedor: pessoa,
@@ -316,17 +325,16 @@ export const conciliacaoService = {
             centroCustoId,
             contaFinanceiraId,
             valor,
-            dataCompetencia: comp,
-            dataVencimento: venc,
+            dataCompetencia: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
+            dataVencimento: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
             status: "aberta",
             observacao: observacaoBase,
             recorrencia,
             recorrenciaDias: diasRec,
             grupoRecorrencia: grupo,
+            ajusteDiaNaoUtil: ajuste,
           });
           criadas.push(c);
-          venc = avancarRecorrencia(venc, recorrencia, diasRec);
-          comp = avancarRecorrencia(comp, recorrencia, diasRec);
         }
         primeira = criadas[0];
         qtdExtra = ocorrencias - 1;
@@ -341,6 +349,7 @@ export const conciliacaoService = {
           dataVencimento: t.data,
           status: "aberta",
           observacao: observacaoBase,
+          ajusteDiaNaoUtil: ajuste,
         });
       }
 
@@ -367,6 +376,7 @@ export const conciliacaoService = {
     let qtdExtra = 0;
 
     if (parcelas > 1) {
+      const grupo = uid();
       const criadas: ContaReceber[] = [];
       for (let i = 0; i < parcelas; i++) {
         const c = await contaReceberService.create(empresaId, {
@@ -379,15 +389,18 @@ export const conciliacaoService = {
           dataVencimento: addMonthsIso(t.data, i),
           status: "aberta",
           observacao: `${observacaoBase}\nParcela ${i + 1}/${parcelas}`,
+          parcelaNumero: i + 1,
+          parcelaTotal: parcelas,
+          grupoParcelamento: grupo,
+          ajusteDiaNaoUtil: ajuste,
         });
         criadas.push(c);
       }
       primeira = criadas[0];
       qtdExtra = parcelas - 1;
     } else if (recorrencia && ocorrencias > 1) {
+      const grupo = uid();
       const criadas: ContaReceber[] = [];
-      let venc = t.data;
-      let comp = t.data;
       for (let i = 0; i < ocorrencias; i++) {
         const c = await contaReceberService.create(empresaId, {
           cliente: pessoa,
@@ -395,14 +408,16 @@ export const conciliacaoService = {
           centroCustoId,
           contaFinanceiraId,
           valor,
-          dataCompetencia: comp,
-          dataVencimento: venc,
+          dataCompetencia: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
+          dataVencimento: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
           status: "aberta",
           observacao: observacaoBase,
+          recorrencia,
+          recorrenciaDias: diasRec,
+          grupoRecorrencia: grupo,
+          ajusteDiaNaoUtil: ajuste,
         });
         criadas.push(c);
-        venc = avancarRecorrencia(venc, recorrencia, diasRec);
-        comp = avancarRecorrencia(comp, recorrencia, diasRec);
       }
       primeira = criadas[0];
       qtdExtra = ocorrencias - 1;
@@ -417,6 +432,7 @@ export const conciliacaoService = {
         dataVencimento: t.data,
         status: "aberta",
         observacao: observacaoBase,
+        ajusteDiaNaoUtil: ajuste,
       });
     }
 

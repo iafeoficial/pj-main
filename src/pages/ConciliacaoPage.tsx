@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2, ArrowLeftRight } from "lucide-react";
+import { Landmark, Upload, CheckCircle2, Ban, RotateCcw, PlusCircle, Pencil, Trash2, ArrowLeftRight, CreditCard } from "lucide-react";
 import type {
   Categoria,
   CentroCusto,
   Cliente,
   ContaFinanceira,
+  ContaFinanceiraTipo,
   ExtratoBancario,
   Fornecedor,
   RecorrenciaTipo,
@@ -43,6 +44,7 @@ import { DatePicker } from "@/components/ui/DatePicker";
 import { Select } from "@/components/ui/Select";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ParcelasRepeticaoFields } from "@/features/contas/ContasPagarExtras";
+import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -58,11 +60,29 @@ const STATUS_STYLE: Record<string, string> = {
   ignorada: "bg-zinc-200 text-zinc-600",
 };
 
+const CONTA_TIPO_LABEL: Record<ContaFinanceiraTipo, string> = {
+  conta_corrente: "Conta corrente",
+  cartao_credito: "Cartão de crédito",
+};
+
+function matchNumeroConta(contas: ContaFinanceira[], contaOfx: string): ContaFinanceira | undefined {
+  const conta = contaOfx.replace(/\D/g, "");
+  if (conta.length < 3) return undefined;
+  return contas.find((c) => {
+    const numero = (c.numeroConta ?? "").replace(/\D/g, "");
+    if (numero.length < 3) return false;
+    return numero.endsWith(conta) || conta.endsWith(numero);
+  });
+}
+
 function Inner({ empresaId }: { empresaId: string }) {
   const { version, bumpData, papel } = useEmpresa();
   const readOnly = !canWrite(papel);
   const { notify } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [ofxArquivos, setOfxArquivos] = useState<File[]>([]);
+  const [ofxContaTipo, setOfxContaTipo] = useState<ContaFinanceiraTipo>("conta_corrente");
+  const [ofxImportando, setOfxImportando] = useState(false);
 
   const { data: transacoes } = useAsyncData(
     () => conciliacaoService.listTransacoes(empresaId),
@@ -180,6 +200,7 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [lancarRecorrencia, setLancarRecorrencia] = useState<RecorrenciaTipo | null>(null);
   const [lancarRecorrenciaDias, setLancarRecorrenciaDias] = useState(30);
   const [lancarRecorrenciaOcorrencias, setLancarRecorrenciaOcorrencias] = useState(1);
+  const [lancarAjusteDiaNaoUtil, setLancarAjusteDiaNaoUtil] = useState<AjusteDiaNaoUtil>("atrasar");
   const [lancarErro, setLancarErro] = useState("");
   const [lancando, setLancando] = useState(false);
 
@@ -260,27 +281,49 @@ function Inner({ empresaId }: { empresaId: string }) {
     [categoriasLancar]
   );
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    if (fileRef.current) fileRef.current.value = "";
+    if (files.length === 0) return;
+    setOfxArquivos(files);
+    setOfxContaTipo("conta_corrente");
+  }
+
+  function fecharImportOfx() {
+    if (ofxImportando) return;
+    setOfxArquivos([]);
+  }
+
+  async function confirmarImportOfx() {
+    if (ofxArquivos.length === 0) return;
+    setOfxImportando(true);
+    let importadas = 0;
+    let duplicadas = 0;
+    let vazios = 0;
     try {
-      const text = await file.text();
-      const ofx = parseOFX(text);
-      if (ofx.transacoes.length === 0) {
-        notify("Nenhuma transação encontrada no arquivo OFX.", "error");
-        return;
+      for (const file of ofxArquivos) {
+        const ofx = parseOFX(await file.text());
+        if (ofx.transacoes.length === 0) {
+          vazios++;
+          continue;
+        }
+        const resumo = await conciliacaoService.importarOFX(empresaId, ofx, {
+          contaTipo: ofxContaTipo,
+          arquivoNome: file.name,
+        });
+        importadas += resumo.importadas;
+        duplicadas += resumo.duplicadas;
       }
-      const resumo = await conciliacaoService.importarOFX(empresaId, ofx);
       bumpData();
-      notify(
-        `Importadas ${resumo.importadas} transações${
-          resumo.duplicadas ? ` (${resumo.duplicadas} duplicadas ignoradas)` : ""
-        }.`
-      );
+      const partes = [`Importadas ${importadas} transações`];
+      if (duplicadas) partes.push(`${duplicadas} duplicadas ignoradas`);
+      if (vazios) partes.push(`${vazios} arquivo(s) sem transação`);
+      notify(`${partes.join(" · ")}.`);
+      setOfxArquivos([]);
     } catch (err) {
       notify((err as Error).message || "Falha ao ler o arquivo OFX.", "error");
     } finally {
-      if (fileRef.current) fileRef.current.value = "";
+      setOfxImportando(false);
     }
   }
 
@@ -361,12 +404,13 @@ function Inner({ empresaId }: { empresaId: string }) {
     setLancarTipoPessoa("pj");
     setLancarCnpjCpf("");
     setLancarCentroId("");
-    setLancarContaFinId("");
+    setLancarContaFinId(contaDoExtrato(t.extratoId));
     setLancarObs("");
     setLancarParcelas(1);
     setLancarRecorrencia(null);
     setLancarRecorrenciaDias(30);
     setLancarRecorrenciaOcorrencias(1);
+    setLancarAjusteDiaNaoUtil("atrasar");
     setLancarErro("");
     const match = parceirosCadastro.find(
       (p) =>
@@ -428,6 +472,7 @@ function Inner({ empresaId }: { empresaId: string }) {
         recorrencia: lancarRecorrencia,
         recorrenciaDias: lancarRecorrenciaDias,
         recorrenciaOcorrencias: lancarRecorrenciaOcorrencias,
+        ajusteDiaNaoUtil: lancarAjusteDiaNaoUtil,
       });
       bumpData();
       const extras = res.extras ?? 0;
@@ -539,14 +584,14 @@ function Inner({ empresaId }: { empresaId: string }) {
   function contaDoExtrato(extratoId: string | null): string {
     if (!extratoId) return "";
     const extrato = extratos.find((e) => e.id === extratoId);
-    const conta = (extrato?.conta ?? "").replace(/\D/g, "");
-    if (conta.length < 3) return "";
-    const match = contasFinanceiras.find((c) => {
-      const numero = (c.numeroConta ?? "").replace(/\D/g, "");
-      if (numero.length < 3) return false;
-      return numero.endsWith(conta) || conta.endsWith(numero);
-    });
-    return match?.id ?? "";
+    const tipo = extrato?.contaTipo ?? "conta_corrente";
+    const doTipo = contasFinanceiras.filter((c) => c.tipo === tipo);
+    const porNumeroTipo = matchNumeroConta(doTipo, extrato?.conta ?? "");
+    if (porNumeroTipo) return porNumeroTipo.id;
+    const porNumero = matchNumeroConta(contasFinanceiras, extrato?.conta ?? "");
+    if (porNumero) return porNumero.id;
+    if (doTipo.length === 1) return doTipo[0].id;
+    return "";
   }
 
   function fecharTransferencia() {
@@ -649,6 +694,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                 type="file"
                 accept=".ofx,.qfx,text/plain"
                 className="hidden"
+                multiple
                 onChange={onFile}
               />
               {pendentes.length > 0 && (
@@ -693,6 +739,9 @@ function Inner({ empresaId }: { empresaId: string }) {
                     <td className="px-4 py-3">
                       <div className="font-medium">{e.banco || "—"}</div>
                       <div className="text-xs text-muted-foreground">{e.conta || "—"}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {CONTA_TIPO_LABEL[e.contaTipo ?? "conta_corrente"]}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {e.dataInicio && e.dataFim
@@ -888,6 +937,64 @@ function Inner({ empresaId }: { empresaId: string }) {
           </table>
         </div>
       )}
+
+      <Modal
+        open={ofxArquivos.length > 0}
+        title="Importar OFX"
+        onClose={fecharImportOfx}
+        footer={
+          <>
+            <button className="btn-outline" disabled={ofxImportando} onClick={fecharImportOfx}>
+              Cancelar
+            </button>
+            <button className="btn-primary" disabled={ofxImportando} onClick={() => void confirmarImportOfx()}>
+              {ofxImportando
+                ? "Importando…"
+                : ofxArquivos.length > 1
+                  ? `Importar ${ofxArquivos.length} arquivos`
+                  : "Importar"}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {ofxArquivos.length === 1
+              ? ofxArquivos[0].name
+              : `${ofxArquivos.length} arquivos — o tipo vale para todos.`}
+          </p>
+          {ofxArquivos.length > 1 && (
+            <ul className="max-h-32 overflow-y-auto text-xs text-muted-foreground">
+              {ofxArquivos.map((f) => (
+                <li key={`${f.name}-${f.size}-${f.lastModified}`}>{f.name}</li>
+              ))}
+            </ul>
+          )}
+          <Field label="Tipo destes extratos" required>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(CONTA_TIPO_LABEL) as ContaFinanceiraTipo[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setOfxContaTipo(t)}
+                  className={`flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    ofxContaTipo === t
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border hover:bg-accent"
+                  }`}
+                >
+                  {t === "cartao_credito" ? (
+                    <CreditCard className="h-4 w-4" />
+                  ) : (
+                    <Landmark className="h-4 w-4" />
+                  )}
+                  {CONTA_TIPO_LABEL[t]}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </div>
+      </Modal>
 
       <Modal
         open={!!transfAlvo || !!transfExtrato}
@@ -1322,6 +1429,7 @@ function Inner({ empresaId }: { empresaId: string }) {
                   recorrencia={lancarRecorrencia}
                   recorrenciaDias={lancarRecorrenciaDias}
                   recorrenciaOcorrencias={lancarRecorrenciaOcorrencias}
+                  ajusteDiaNaoUtil={lancarAjusteDiaNaoUtil}
                   editing={false}
                   onChange={(partial) => {
                     if (partial.parcelas !== undefined) setLancarParcelas(partial.parcelas);
@@ -1331,6 +1439,9 @@ function Inner({ empresaId }: { empresaId: string }) {
                     }
                     if (partial.recorrenciaOcorrencias !== undefined) {
                       setLancarRecorrenciaOcorrencias(partial.recorrenciaOcorrencias);
+                    }
+                    if (partial.ajusteDiaNaoUtil !== undefined) {
+                      setLancarAjusteDiaNaoUtil(partial.ajusteDiaNaoUtil);
                     }
                     setLancarErro("");
                   }}

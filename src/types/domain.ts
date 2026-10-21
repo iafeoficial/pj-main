@@ -64,6 +64,14 @@ export interface CentroCusto extends OwnedEntity {
   ativo: boolean;
 }
 
+/** Feriado estadual/municipal da empresa (nacionais são calculados). */
+export interface Feriado extends OwnedEntity {
+  data: string;
+  nome: string;
+  /** Se verdadeiro, vale todo ano no mesmo dia e mês. */
+  repeteAnual: boolean;
+}
+
 // ---- Contas e Cartões ----
 export type ContaFinanceiraTipo = "conta_corrente" | "cartao_credito";
 
@@ -172,6 +180,12 @@ export interface ContaReceber extends OwnedEntity {
   contaFinanceiraId: string | null;
   valor: number;
   valorRecebido: number;
+  parcelaNumero: number | null;
+  parcelaTotal: number | null;
+  grupoParcelamento: string | null;
+  recorrencia: RecorrenciaTipo | null;
+  recorrenciaDias: number | null;
+  grupoRecorrencia: string | null;
   dataCompetencia: string;
   dataVencimento: string;
   dataRecebimento: string | null;
@@ -198,6 +212,8 @@ export type ConciliacaoStatus = "pendente" | "conciliada" | "ignorada";
 export interface ExtratoBancario extends OwnedEntity {
   banco: string;
   conta: string;
+  /** Conta corrente ou cartão — informado na importação do OFX. */
+  contaTipo: ContaFinanceiraTipo;
   dataInicio: string | null;
   dataFim: string | null;
   arquivoNome: string;
