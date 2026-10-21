@@ -284,7 +284,10 @@ municipais em `/feriados` (`repete_anual`). Se o dia 30/31 não existe no mês
 (fevereiro, abril etc.), usa o último dia do mês; o ajuste de dia útil **não
 sai desse mês**. Só o vencimento muda; a competência permanece.
 **Implementação:** `src/lib/diaUtil.ts`; migration `0029_feriados.sql`;
-`feriadoService`; aba Parcelas no ContasModule e na conciliação.
+`feriadoService`; aba Parcelas no ContasModule e na conciliação. Na criação,
+`montarSimulacao` lista cada título (valor, vencimento, dia da semana, competência);
+valor e vencimento são editáveis e `create` grava essa lista (`simulacao`) em vez
+de gerar de novo. Sem coluna nova.
 
 ## ADR-029 — Filtros persistentes e tipo na importação OFX
 **Decisão:** os filtros de Contas a Pagar/Receber (período, busca, status) ficam no

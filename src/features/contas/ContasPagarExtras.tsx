@@ -1,14 +1,18 @@
+import { useEffect } from "react";
 import type { ImpostosRetidos, ImpostoRetido, RecorrenciaTipo } from "@/types/domain";
-import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
-import { AJUSTE_DIA_NAO_UTIL_OPTS } from "@/lib/diaUtil";
+import type { AjusteDiaNaoUtil, ExtraFeriado } from "@/lib/diaUtil";
+import { AJUSTE_DIA_NAO_UTIL_OPTS, diaSemanaCurto } from "@/lib/diaUtil";
 import { IMPOSTOS_RETIDOS } from "@/types/domain";
 import { Field } from "@/components/ui/Field";
 import { Select } from "@/components/ui/Select";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { formatBRL, formatDate } from "@/lib/utils";
 import {
   IMPOSTO_LABELS,
   RECORRENCIA_OPTS,
+  montarSimulacao,
   totalImpostosRetidos,
+  type LinhaSimulacao,
 } from "@/lib/contaPagarExtras";
 
 export function emptyImpostos(): ImpostosRetidos {
@@ -85,6 +89,12 @@ export function ParcelasRepeticaoFields({
   recorrenciaOcorrencias,
   ajusteDiaNaoUtil,
   editing,
+  valor,
+  dataVencimento,
+  dataCompetencia,
+  feriados = [],
+  simulacao = [],
+  dividirValor = true,
   onChange,
 }: {
   parcelas: number;
@@ -93,14 +103,56 @@ export function ParcelasRepeticaoFields({
   recorrenciaOcorrencias: number;
   ajusteDiaNaoUtil: AjusteDiaNaoUtil;
   editing: boolean;
+  valor: number;
+  dataVencimento: string;
+  dataCompetencia: string;
+  feriados?: ExtraFeriado[];
+  simulacao?: LinhaSimulacao[];
+  /** False na conciliação: o valor do extrato se repete em cada título. */
+  dividirValor?: boolean;
   onChange: (partial: {
     parcelas?: number;
     recorrencia?: RecorrenciaTipo | null;
     recorrenciaDias?: number;
     recorrenciaOcorrencias?: number;
     ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
+    simulacao?: LinhaSimulacao[];
   }) => void;
 }) {
+  const extrasKey = feriados.map((e) => `${e.data}:${e.repeteAnual ? 1 : 0}`).join(",");
+
+  useEffect(() => {
+    if (editing) return;
+    onChange({
+      simulacao: montarSimulacao({
+        valor,
+        dataVencimento,
+        dataCompetencia,
+        parcelas,
+        recorrencia,
+        recorrenciaDias,
+        recorrenciaOcorrencias,
+        ajuste: ajusteDiaNaoUtil,
+        extras: feriados,
+        dividirValor,
+      }),
+    });
+    // Recalcula só quando a regra muda — edits manuais nas linhas não entram aqui.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    editing,
+    valor,
+    dataVencimento,
+    dataCompetencia,
+    parcelas,
+    recorrencia,
+    recorrenciaDias,
+    recorrenciaOcorrencias,
+    ajusteDiaNaoUtil,
+    extrasKey,
+    dividirValor,
+  ]);
+
   if (editing) {
     return (
       <p className="text-sm text-muted-foreground">
@@ -112,8 +164,24 @@ export function ParcelasRepeticaoFields({
   const temParcelas = parcelas > 1;
   const temRecorrencia = !!recorrencia;
   const personalizada = recorrencia === "personalizada";
+  const soma = simulacao.reduce((s, l) => s + (Number(l.valor) || 0), 0);
+  const esperado = temParcelas
+    ? dividirValor
+      ? Number(valor) || 0
+      : (Number(valor) || 0) * parcelas
+    : temRecorrencia
+      ? (Number(valor) || 0) * Math.max(1, recorrenciaOcorrencias)
+      : Number(valor) || 0;
+  const somaDifere = simulacao.length > 0 && Math.abs(soma - esperado) > 0.009;
+
+  function patchLinha(i: number, partial: Partial<LinhaSimulacao>) {
+    onChange({
+      simulacao: simulacao.map((l, idx) => (idx === i ? { ...l, ...partial } : l)),
+    });
+  }
 
   return (
+    <div className="space-y-4">
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Field
         label="Parcelas"
@@ -211,6 +279,67 @@ export function ParcelasRepeticaoFields({
           options={AJUSTE_DIA_NAO_UTIL_OPTS.map((o) => ({ value: o.value, label: o.label }))}
         />
       </Field>
+    </div>
+
+      {simulacao.length > 0 && (
+        <div className="card max-h-72 overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 border-b border-border bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 font-medium">Parcela</th>
+                <th className="px-3 py-2 font-medium">Valor</th>
+                <th className="px-3 py-2 font-medium">Vencimento</th>
+                <th className="px-3 py-2 font-medium">Dia</th>
+                <th className="px-3 py-2 font-medium">Competência</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {simulacao.map((l, i) => (
+                <tr key={`${l.dataCompetencia}-${i}`}>
+                  <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
+                    {i + 1}/{simulacao.length}
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      className="input h-8 w-28"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={l.valor || ""}
+                      onChange={(e) => patchLinha(i, { valor: Number(e.target.value) || 0 })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <DatePicker
+                      value={l.dataVencimento}
+                      onChange={(v) => patchLinha(i, { dataVencimento: v })}
+                      className="w-36"
+                    />
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 capitalize text-muted-foreground">
+                    {diaSemanaCurto(l.dataVencimento)}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                    {formatDate(l.dataCompetencia)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="border-t border-border px-3 py-2 text-xs">
+            Soma: <span className="font-medium tabular-nums">{formatBRL(soma)}</span>
+            {dividirValor && temParcelas && (
+              <span className="text-muted-foreground"> · total do lançamento {formatBRL(esperado)}</span>
+            )}
+            {somaDifere && (
+              <p className="mt-1 text-amber-700">
+                A soma das linhas ({formatBRL(soma)}) não fecha com o esperado ({formatBRL(esperado)}).
+                Você pode ajustar os valores ou salvar assim mesmo.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

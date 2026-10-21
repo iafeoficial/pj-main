@@ -1,4 +1,7 @@
 /** Feriados nacionais e ajuste de vencimento para dia útil. */
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+
 
 export type AjusteDiaNaoUtil = "manter" | "antecipar" | "atrasar";
 
@@ -21,6 +24,13 @@ export interface FeriadoNacional {
 
 function parseIso(iso: string): Date {
   return new Date(`${iso.slice(0, 10)}T00:00:00`);
+}
+
+/** Dia da semana curto em pt-BR (seg, ter, …). */
+export function diaSemanaCurto(iso: string): string {
+  const d = parseIso(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return format(d, "EEE", { locale: ptBR }).replace(".", "");
 }
 
 function formatIso(d: Date): string {

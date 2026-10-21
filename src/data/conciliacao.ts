@@ -11,10 +11,10 @@ import type {
   TransacaoTipo,
 } from "@/types/domain";
 import type { OfxResultado } from "@/lib/ofx";
-import { addMonthsIso } from "@/lib/contaPagarExtras";
-import { vencimentoOcorrencia, type AjusteDiaNaoUtil } from "@/lib/diaUtil";
-import { uid } from "@/lib/utils";
+import { montarSimulacao, type LinhaSimulacao } from "@/lib/contaPagarExtras";
+import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
 import { logAudit } from "./audit";
+import { feriadoService } from "./feriados";
 import { extratoTable, regraTable, transacaoTable } from "./repos";
 import { contaPagarService, contaReceberService } from "./services";
 import { transferenciaService } from "./transferencias";
@@ -33,6 +33,7 @@ export type LancarDeTransacaoInput = {
   /** Inclui a ocorrência baixada do extrato. */
   recorrenciaOcorrencias?: number;
   ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
+  simulacao?: LinhaSimulacao[];
 };
 
 export interface ImportResumo {
@@ -287,57 +288,61 @@ export const conciliacaoService = {
         ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias ?? 1)))
         : null;
     const ajuste: AjusteDiaNaoUtil = input.ajusteDiaNaoUtil ?? "atrasar";
+    const feriados = await feriadoService.extras(empresaId);
+    const sim =
+      input.simulacao && input.simulacao.length > 1
+        ? input.simulacao
+        : montarSimulacao({
+            valor,
+            dataVencimento: t.data,
+            dataCompetencia: t.data,
+            parcelas,
+            recorrencia,
+            recorrenciaDias: diasRec,
+            recorrenciaOcorrencias: ocorrencias,
+            ajuste,
+            extras: feriados,
+            dividirValor: false,
+          });
 
     if (t.tipo === "debito") {
       let primeira: ContaPagar;
       let qtdExtra = 0;
 
       if (parcelas > 1) {
-        const grupo = uid();
-        const criadas: ContaPagar[] = [];
-        for (let i = 0; i < parcelas; i++) {
-          const c = await contaPagarService.create(empresaId, {
-            fornecedor: pessoa,
-            categoriaId: input.categoriaId,
-            centroCustoId,
-            contaFinanceiraId,
-            valor,
-            dataCompetencia: addMonthsIso(t.data, i),
-            dataVencimento: addMonthsIso(t.data, i),
-            status: "aberta",
-            observacao: `${observacaoBase}\nParcela ${i + 1}/${parcelas}`,
-            parcelaNumero: i + 1,
-            parcelaTotal: parcelas,
-            grupoParcelamento: grupo,
-            ajusteDiaNaoUtil: ajuste,
-          });
-          criadas.push(c);
-        }
-        primeira = criadas[0];
-        qtdExtra = parcelas - 1;
+        primeira = await contaPagarService.create(empresaId, {
+          fornecedor: pessoa,
+          categoriaId: input.categoriaId,
+          centroCustoId,
+          contaFinanceiraId,
+          valor,
+          dataCompetencia: t.data,
+          dataVencimento: t.data,
+          status: "aberta",
+          observacao: observacaoBase,
+          parcelas,
+          simulacao: sim,
+          ajusteDiaNaoUtil: ajuste,
+        });
+        qtdExtra = Math.max(0, (sim.length || parcelas) - 1);
       } else if (recorrencia && ocorrencias > 1) {
-        const grupo = uid();
-        const criadas: ContaPagar[] = [];
-        for (let i = 0; i < ocorrencias; i++) {
-          const c = await contaPagarService.create(empresaId, {
-            fornecedor: pessoa,
-            categoriaId: input.categoriaId,
-            centroCustoId,
-            contaFinanceiraId,
-            valor,
-            dataCompetencia: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
-            dataVencimento: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
-            status: "aberta",
-            observacao: observacaoBase,
-            recorrencia,
-            recorrenciaDias: diasRec,
-            grupoRecorrencia: grupo,
-            ajusteDiaNaoUtil: ajuste,
-          });
-          criadas.push(c);
-        }
-        primeira = criadas[0];
-        qtdExtra = ocorrencias - 1;
+        primeira = await contaPagarService.create(empresaId, {
+          fornecedor: pessoa,
+          categoriaId: input.categoriaId,
+          centroCustoId,
+          contaFinanceiraId,
+          valor,
+          dataCompetencia: t.data,
+          dataVencimento: t.data,
+          status: "aberta",
+          observacao: observacaoBase,
+          recorrencia,
+          recorrenciaDias: diasRec,
+          recorrenciaOcorrencias: ocorrencias,
+          simulacao: sim,
+          ajusteDiaNaoUtil: ajuste,
+        });
+        qtdExtra = Math.max(0, (sim.length || ocorrencias) - 1);
       } else {
         primeira = await contaPagarService.create(empresaId, {
           fornecedor: pessoa,
@@ -376,51 +381,39 @@ export const conciliacaoService = {
     let qtdExtra = 0;
 
     if (parcelas > 1) {
-      const grupo = uid();
-      const criadas: ContaReceber[] = [];
-      for (let i = 0; i < parcelas; i++) {
-        const c = await contaReceberService.create(empresaId, {
-          cliente: pessoa,
-          categoriaId: input.categoriaId,
-          centroCustoId,
-          contaFinanceiraId,
-          valor,
-          dataCompetencia: addMonthsIso(t.data, i),
-          dataVencimento: addMonthsIso(t.data, i),
-          status: "aberta",
-          observacao: `${observacaoBase}\nParcela ${i + 1}/${parcelas}`,
-          parcelaNumero: i + 1,
-          parcelaTotal: parcelas,
-          grupoParcelamento: grupo,
-          ajusteDiaNaoUtil: ajuste,
-        });
-        criadas.push(c);
-      }
-      primeira = criadas[0];
-      qtdExtra = parcelas - 1;
+      primeira = await contaReceberService.create(empresaId, {
+        cliente: pessoa,
+        categoriaId: input.categoriaId,
+        centroCustoId,
+        contaFinanceiraId,
+        valor,
+        dataCompetencia: t.data,
+        dataVencimento: t.data,
+        status: "aberta",
+        observacao: observacaoBase,
+        parcelas,
+        simulacao: sim,
+        ajusteDiaNaoUtil: ajuste,
+      });
+      qtdExtra = Math.max(0, (sim.length || parcelas) - 1);
     } else if (recorrencia && ocorrencias > 1) {
-      const grupo = uid();
-      const criadas: ContaReceber[] = [];
-      for (let i = 0; i < ocorrencias; i++) {
-        const c = await contaReceberService.create(empresaId, {
-          cliente: pessoa,
-          categoriaId: input.categoriaId,
-          centroCustoId,
-          contaFinanceiraId,
-          valor,
-          dataCompetencia: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
-          dataVencimento: vencimentoOcorrencia(t.data, i, recorrencia, diasRec, "manter"),
-          status: "aberta",
-          observacao: observacaoBase,
-          recorrencia,
-          recorrenciaDias: diasRec,
-          grupoRecorrencia: grupo,
-          ajusteDiaNaoUtil: ajuste,
-        });
-        criadas.push(c);
-      }
-      primeira = criadas[0];
-      qtdExtra = ocorrencias - 1;
+      primeira = await contaReceberService.create(empresaId, {
+        cliente: pessoa,
+        categoriaId: input.categoriaId,
+        centroCustoId,
+        contaFinanceiraId,
+        valor,
+        dataCompetencia: t.data,
+        dataVencimento: t.data,
+        status: "aberta",
+        observacao: observacaoBase,
+        recorrencia,
+        recorrenciaDias: diasRec,
+        recorrenciaOcorrencias: ocorrencias,
+        simulacao: sim,
+        ajusteDiaNaoUtil: ajuste,
+      });
+      qtdExtra = Math.max(0, (sim.length || ocorrencias) - 1);
     } else {
       primeira = await contaReceberService.create(empresaId, {
         cliente: pessoa,

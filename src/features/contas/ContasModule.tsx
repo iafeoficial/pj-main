@@ -38,8 +38,9 @@ import { EntityLink } from "@/components/EntityLink";
 import { parseContaOrigem, resolveIdByPrefix } from "@/lib/entityLinks";
 import { proximoVencimentoFatura } from "@/lib/fatura";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
-import { totalImpostosRetidos } from "@/lib/contaPagarExtras";
-import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
+import { totalImpostosRetidos, type LinhaSimulacao } from "@/lib/contaPagarExtras";
+import type { AjusteDiaNaoUtil, ExtraFeriado } from "@/lib/diaUtil";
+import { feriadoService } from "@/data/feriados";
 import { compraService, vendaService } from "@/data/operacao";
 import { confirmarMovimentacao, previewMovimentacao } from "@/data/importacaoFinanceira";
 import type { PreviewMovimentacao } from "@/lib/movimentacaoPlanilha";
@@ -143,6 +144,7 @@ export interface ContaFormData {
   recorrenciaDias: number;
   recorrenciaOcorrencias: number;
   ajusteDiaNaoUtil: AjusteDiaNaoUtil;
+  simulacao: LinhaSimulacao[];
 }
 
 type FormTab = "dados" | "impostos" | "parcelas" | "historico";
@@ -187,6 +189,7 @@ const EMPTY_FORM = (): ContaFormData => ({
   recorrenciaDias: 30,
   recorrenciaOcorrencias: 1,
   ajusteDiaNaoUtil: "atrasar",
+  simulacao: [],
 });
 
 function ListaMovimento({
@@ -259,6 +262,11 @@ export function ContasModule({
         : Promise.resolve([] as ContaFinanceira[]),
     [empresaId, version, config.usaContaFinanceira],
     [] as ContaFinanceira[]
+  );
+  const { data: feriados } = useAsyncData(
+    () => feriadoService.extras(empresaId),
+    [empresaId, version],
+    [] as ExtraFeriado[]
   );
   const { data: todasCategorias } = useAsyncData(
     () => categoriaService.list(empresaId),
@@ -654,6 +662,7 @@ export function ContasModule({
       recorrenciaDias: c.recorrenciaDias ?? 30,
       recorrenciaOcorrencias: 1,
       ajusteDiaNaoUtil: "atrasar",
+      simulacao: [],
     });
     setErrors({});
     const linked = resolveVincularCadastro(c.pessoa);
@@ -1624,7 +1633,7 @@ export function ContasModule({
               />
             )}
 
-            {formTab === "parcelas" && (
+            <div className={formTab === "parcelas" ? undefined : "hidden"}>
               <ParcelasRepeticaoFields
                 parcelas={form.parcelas}
                 recorrencia={form.recorrencia}
@@ -1632,9 +1641,14 @@ export function ContasModule({
                 recorrenciaOcorrencias={form.recorrenciaOcorrencias}
                 ajusteDiaNaoUtil={form.ajusteDiaNaoUtil ?? "atrasar"}
                 editing={!!editingId}
+                valor={form.valor}
+                dataVencimento={form.dataVencimento}
+                dataCompetencia={form.dataCompetencia}
+                feriados={feriados}
+                simulacao={form.simulacao ?? []}
                 onChange={(partial) => setForm({ ...form, ...partial })}
               />
-            )}
+            </div>
 
             {config.extrasPagar && formTab === "historico" && editingId && (
               <HistoricoPagamentos items={historico} />

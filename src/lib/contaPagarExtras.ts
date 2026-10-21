@@ -1,4 +1,10 @@
 import type { ContaPagar, ImpostosRetidos, RecorrenciaTipo } from "@/types/domain";
+import {
+  vencimentoOcorrencia,
+  vencimentoParcela,
+  type AjusteDiaNaoUtil,
+  type ExtraFeriado,
+} from "@/lib/diaUtil";
 
 /** Soma dos impostos marcados para reter. */
 export function totalImpostosRetidos(impostos: ImpostosRetidos | null | undefined): number {
@@ -79,6 +85,60 @@ export function splitParcelas(total: number, n: number): number[] {
   }
   vals.push((cents - allocated) / 100);
   return vals;
+}
+
+export interface LinhaSimulacao {
+  valor: number;
+  dataVencimento: string;
+  dataCompetencia: string;
+}
+
+/** Gera as linhas da simulação (parcelas ou repetição). Vazio se for um título só. */
+export function montarSimulacao(input: {
+  valor: number;
+  dataVencimento: string;
+  dataCompetencia: string;
+  parcelas: number;
+  recorrencia: RecorrenciaTipo | null;
+  recorrenciaDias?: number | null;
+  recorrenciaOcorrencias: number;
+  ajuste: AjusteDiaNaoUtil;
+  extras?: ExtraFeriado[];
+  /** Default true: divide o total. False: cada linha fica com o valor cheio (conciliação). */
+  dividirValor?: boolean;
+}): LinhaSimulacao[] {
+  const parcelas = Math.max(1, Math.floor(input.parcelas || 1));
+  const ajuste = input.ajuste;
+  const extras = input.extras ?? [];
+  const valor = Number(input.valor) || 0;
+
+  if (parcelas > 1) {
+    const valores =
+      input.dividirValor === false
+        ? Array.from({ length: parcelas }, () => Number(valor.toFixed(2)))
+        : splitParcelas(valor, parcelas);
+    return valores.map((v, i) => ({
+      valor: v,
+      dataVencimento: vencimentoParcela(input.dataVencimento, i, ajuste, extras),
+      dataCompetencia: addMonthsIso(input.dataCompetencia, i),
+    }));
+  }
+
+  const rec = input.recorrencia;
+  const n = rec ? Math.max(1, Math.floor(input.recorrenciaOcorrencias || 1)) : 1;
+  if (rec && n > 1) {
+    const dias =
+      rec === "personalizada"
+        ? Math.max(1, Math.min(365, Math.floor(input.recorrenciaDias ?? 1)))
+        : null;
+    const v = Number(valor.toFixed(2));
+    return Array.from({ length: n }, (_, i) => ({
+      valor: v,
+      dataVencimento: vencimentoOcorrencia(input.dataVencimento, i, rec, dias, ajuste, extras),
+      dataCompetencia: vencimentoOcorrencia(input.dataCompetencia, i, rec, dias, "manter"),
+    }));
+  }
+  return [];
 }
 
 export const RECORRENCIA_OPTS: { value: RecorrenciaTipo; label: string }[] = [

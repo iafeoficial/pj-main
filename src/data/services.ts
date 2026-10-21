@@ -17,6 +17,7 @@ import {
   addMonthsIso,
   splitParcelas,
   valorDevido,
+  type LinhaSimulacao,
 } from "@/lib/contaPagarExtras";
 import {
   ajustarDiaUtil,
@@ -307,6 +308,8 @@ type ContaPagarInput = Omit<
   recorrenciaOcorrencias?: number;
   transferencia?: boolean;
   ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
+  /** Se informado, grava estes títulos em vez de gerar as datas/valores. */
+  simulacao?: LinhaSimulacao[];
 };
 
 function normalizePagarExtras(data: ContaPagarInput) {
@@ -339,11 +342,13 @@ async function insertPagar(
     parcelas: _p,
     recorrenciaOcorrencias: _r,
     ajusteDiaNaoUtil: _a,
+    simulacao: _s,
     ...rest
   } = data;
   void _p;
   void _r;
   void _a;
+  void _s;
   return contaPagarTable.create(empresaId, {
     ...rest,
     ...extras,
@@ -377,19 +382,23 @@ export const contaPagarService = {
     const ocorrencias = Math.max(1, Math.floor(data.recorrenciaOcorrencias ?? 1));
     const ajuste: AjusteDiaNaoUtil = data.ajusteDiaNaoUtil ?? "atrasar";
     const feriados = await feriadoService.extras(empresaId);
+    const sim = data.simulacao ?? [];
 
     if (parcelas > 1) {
       const grupo = uid();
       const valores = splitParcelas(data.valor, parcelas);
       const criadas: ContaPagar[] = [];
-      for (let i = 0; i < parcelas; i++) {
+      const n = sim.length > 1 ? sim.length : parcelas;
+      for (let i = 0; i < n; i++) {
+        const linha = sim[i];
         const c = await insertPagar(empresaId, data, {
-          valor: valores[i],
+          valor: linha?.valor ?? valores[i] ?? data.valor,
           parcelaNumero: i + 1,
-          parcelaTotal: parcelas,
+          parcelaTotal: n,
           grupoParcelamento: grupo,
-          dataVencimento: vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
-          dataCompetencia: addMonthsIso(data.dataCompetencia, i),
+          dataVencimento:
+            linha?.dataVencimento ?? vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
+          dataCompetencia: linha?.dataCompetencia ?? addMonthsIso(data.dataCompetencia, i),
           recorrencia: null,
           recorrenciaDias: null,
           grupoRecorrencia: null,
@@ -419,23 +428,17 @@ export const contaPagarService = {
         data.recorrencia === "personalizada"
           ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
           : null;
-      for (let i = 0; i < ocorrencias; i++) {
+      const n = sim.length > 1 ? sim.length : ocorrencias;
+      for (let i = 0; i < n; i++) {
+        const linha = sim[i];
         const c = await insertPagar(empresaId, data, {
-          dataVencimento: vencimentoOcorrencia(
-            data.dataVencimento,
-            i,
-            data.recorrencia,
-            dias,
-            ajuste,
-            feriados
-          ),
-          dataCompetencia: vencimentoOcorrencia(
-            data.dataCompetencia,
-            i,
-            data.recorrencia,
-            dias,
-            "manter"
-          ),
+          valor: linha?.valor ?? data.valor,
+          dataVencimento:
+            linha?.dataVencimento ??
+            vencimentoOcorrencia(data.dataVencimento, i, data.recorrencia, dias, ajuste, feriados),
+          dataCompetencia:
+            linha?.dataCompetencia ??
+            vencimentoOcorrencia(data.dataCompetencia, i, data.recorrencia, dias, "manter"),
           recorrencia: data.recorrencia,
           recorrenciaDias: dias,
           grupoRecorrencia: grupo,
@@ -598,6 +601,7 @@ type ContaReceberInput = Omit<
   parcelas?: number;
   recorrenciaOcorrencias?: number;
   ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
+  simulacao?: LinhaSimulacao[];
 };
 
 function normalizeReceberSerie(data: ContaReceberInput) {
@@ -622,10 +626,11 @@ async function insertReceber(
   overrides: Partial<ContaReceber> = {}
 ): Promise<ContaReceber> {
   const extras = normalizeReceberSerie(data);
-  const { parcelas: _p, recorrenciaOcorrencias: _r, ajusteDiaNaoUtil: _a, ...rest } = data;
+  const { parcelas: _p, recorrenciaOcorrencias: _r, ajusteDiaNaoUtil: _a, simulacao: _s, ...rest } = data;
   void _p;
   void _r;
   void _a;
+  void _s;
   return contaReceberTable.create(empresaId, {
     ...rest,
     ...extras,
@@ -658,19 +663,23 @@ export const contaReceberService = {
     const ocorrencias = Math.max(1, Math.floor(data.recorrenciaOcorrencias ?? 1));
     const ajuste: AjusteDiaNaoUtil = data.ajusteDiaNaoUtil ?? "atrasar";
     const feriados = await feriadoService.extras(empresaId);
+    const sim = data.simulacao ?? [];
 
     if (parcelas > 1) {
       const grupo = uid();
       const valores = splitParcelas(data.valor, parcelas);
       const criadas: ContaReceber[] = [];
-      for (let i = 0; i < parcelas; i++) {
+      const n = sim.length > 1 ? sim.length : parcelas;
+      for (let i = 0; i < n; i++) {
+        const linha = sim[i];
         const c = await insertReceber(empresaId, data, {
-          valor: valores[i],
+          valor: linha?.valor ?? valores[i] ?? data.valor,
           parcelaNumero: i + 1,
-          parcelaTotal: parcelas,
+          parcelaTotal: n,
           grupoParcelamento: grupo,
-          dataVencimento: vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
-          dataCompetencia: addMonthsIso(data.dataCompetencia, i),
+          dataVencimento:
+            linha?.dataVencimento ?? vencimentoParcela(data.dataVencimento, i, ajuste, feriados),
+          dataCompetencia: linha?.dataCompetencia ?? addMonthsIso(data.dataCompetencia, i),
           recorrencia: null,
           recorrenciaDias: null,
           grupoRecorrencia: null,
@@ -700,23 +709,17 @@ export const contaReceberService = {
         data.recorrencia === "personalizada"
           ? Math.max(1, Math.min(365, Math.floor(data.recorrenciaDias ?? 1)))
           : null;
-      for (let i = 0; i < ocorrencias; i++) {
+      const n = sim.length > 1 ? sim.length : ocorrencias;
+      for (let i = 0; i < n; i++) {
+        const linha = sim[i];
         const c = await insertReceber(empresaId, data, {
-          dataVencimento: vencimentoOcorrencia(
-            data.dataVencimento,
-            i,
-            data.recorrencia,
-            dias,
-            ajuste,
-            feriados
-          ),
-          dataCompetencia: vencimentoOcorrencia(
-            data.dataCompetencia,
-            i,
-            data.recorrencia,
-            dias,
-            "manter"
-          ),
+          valor: linha?.valor ?? data.valor,
+          dataVencimento:
+            linha?.dataVencimento ??
+            vencimentoOcorrencia(data.dataVencimento, i, data.recorrencia, dias, ajuste, feriados),
+          dataCompetencia:
+            linha?.dataCompetencia ??
+            vencimentoOcorrencia(data.dataCompetencia, i, data.recorrencia, dias, "manter"),
           recorrencia: data.recorrencia,
           recorrenciaDias: dias,
           grupoRecorrencia: grupo,

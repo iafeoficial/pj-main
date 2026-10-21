@@ -27,7 +27,10 @@ import {
   contaFinanceiraService,
 } from "@/data/services";
 import { clienteService, fornecedorService } from "@/data/cadastros";
+import { feriadoService } from "@/data/feriados";
 import { transferenciaService } from "@/data/transferencias";
+import type { LinhaSimulacao } from "@/lib/contaPagarExtras";
+import type { AjusteDiaNaoUtil, ExtraFeriado } from "@/lib/diaUtil";
 import { parseOFX } from "@/lib/ofx";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { formatCpfCnpj } from "@/lib/masks";
@@ -44,7 +47,6 @@ import { DatePicker } from "@/components/ui/DatePicker";
 import { Select } from "@/components/ui/Select";
 import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { ParcelasRepeticaoFields } from "@/features/contas/ContasPagarExtras";
-import type { AjusteDiaNaoUtil } from "@/lib/diaUtil";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { useToast } from "@/components/ui/Toast";
 import { EntityLink } from "@/components/EntityLink";
@@ -124,6 +126,11 @@ function Inner({ empresaId }: { empresaId: string }) {
     [empresaId, version],
     [] as ContaFinanceira[]
   );
+  const { data: feriados } = useAsyncData(
+    () => feriadoService.extras(empresaId),
+    [empresaId, version],
+    [] as ExtraFeriado[]
+  );
   /** Lista fresca ao abrir o modal Lançar (não depende só do cache da página). */
   const [contasLancar, setContasLancar] = useState<ContaFinanceira[]>([]);
   const [centrosLancar, setCentrosLancar] = useState<CentroCusto[]>([]);
@@ -201,6 +208,7 @@ function Inner({ empresaId }: { empresaId: string }) {
   const [lancarRecorrenciaDias, setLancarRecorrenciaDias] = useState(30);
   const [lancarRecorrenciaOcorrencias, setLancarRecorrenciaOcorrencias] = useState(1);
   const [lancarAjusteDiaNaoUtil, setLancarAjusteDiaNaoUtil] = useState<AjusteDiaNaoUtil>("atrasar");
+  const [lancarSimulacao, setLancarSimulacao] = useState<LinhaSimulacao[]>([]);
   const [lancarErro, setLancarErro] = useState("");
   const [lancando, setLancando] = useState(false);
 
@@ -411,6 +419,7 @@ function Inner({ empresaId }: { empresaId: string }) {
     setLancarRecorrenciaDias(30);
     setLancarRecorrenciaOcorrencias(1);
     setLancarAjusteDiaNaoUtil("atrasar");
+    setLancarSimulacao([]);
     setLancarErro("");
     const match = parceirosCadastro.find(
       (p) =>
@@ -473,6 +482,7 @@ function Inner({ empresaId }: { empresaId: string }) {
         recorrenciaDias: lancarRecorrenciaDias,
         recorrenciaOcorrencias: lancarRecorrenciaOcorrencias,
         ajusteDiaNaoUtil: lancarAjusteDiaNaoUtil,
+        simulacao: lancarSimulacao,
       });
       bumpData();
       const extras = res.extras ?? 0;
@@ -1414,8 +1424,7 @@ function Inner({ empresaId }: { empresaId: string }) {
               </div>
             )}
 
-            {lancarTab === "parcelas" && (
-              <div className="space-y-3">
+            <div className={lancarTab === "parcelas" ? "space-y-3" : "hidden"}>
                 <p className="text-xs text-muted-foreground">
                   O valor do extrato ({formatBRL(Math.abs(lancarAlvo.valor))}) é o valor de cada
                   parcela/ocorrência — não é dividido. A 1ª fica baixada; as demais entram em{" "}
@@ -1431,6 +1440,12 @@ function Inner({ empresaId }: { empresaId: string }) {
                   recorrenciaOcorrencias={lancarRecorrenciaOcorrencias}
                   ajusteDiaNaoUtil={lancarAjusteDiaNaoUtil}
                   editing={false}
+                  valor={Math.abs(lancarAlvo.valor)}
+                  dataVencimento={lancarAlvo.data}
+                  dataCompetencia={lancarAlvo.data}
+                  feriados={feriados}
+                  simulacao={lancarSimulacao}
+                  dividirValor={false}
                   onChange={(partial) => {
                     if (partial.parcelas !== undefined) setLancarParcelas(partial.parcelas);
                     if (partial.recorrencia !== undefined) setLancarRecorrencia(partial.recorrencia);
@@ -1443,11 +1458,11 @@ function Inner({ empresaId }: { empresaId: string }) {
                     if (partial.ajusteDiaNaoUtil !== undefined) {
                       setLancarAjusteDiaNaoUtil(partial.ajusteDiaNaoUtil);
                     }
+                    if (partial.simulacao !== undefined) setLancarSimulacao(partial.simulacao);
                     setLancarErro("");
                   }}
                 />
               </div>
-            )}
           </div>
         )}
       </Modal>

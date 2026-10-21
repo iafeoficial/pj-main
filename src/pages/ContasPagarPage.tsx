@@ -72,6 +72,7 @@ const config: ContasConfig = {
           : null,
       recorrenciaOcorrencias: input.recorrenciaOcorrencias,
       ajusteDiaNaoUtil: input.ajusteDiaNaoUtil,
+      simulacao: input.simulacao,
     }),
   update: (empresaId, id, input) =>
     contaPagarService.update(empresaId, id, {
