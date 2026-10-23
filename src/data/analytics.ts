@@ -1,7 +1,7 @@
 // Cálculos financeiros derivados (dashboard, fluxo de caixa e relatórios). Assíncronos (C3).
 import type { ContaPagar, ContaReceber } from "@/types/domain";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
-import { monthRange } from "@/lib/utils";
+import { monthRange, roundBRL } from "@/lib/utils";
 import { transferenciaService } from "./transferencias";
 import {
   categoriaGrupoService,
@@ -346,9 +346,13 @@ export async function getSaldosContas(
     add(t.contaOrigemId, -t.valor);
   }
   const linhas = contas
-    .map((c) => ({ id: c.id, nome: labelContaFinanceira(c), saldo: map.get(c.id) ?? 0 }))
+    .map((c) => ({
+      id: c.id,
+      nome: labelContaFinanceira(c),
+      saldo: roundBRL(map.get(c.id) ?? 0),
+    }))
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  return { contas: linhas, total: linhas.reduce((s, l) => s + l.saldo, 0) };
+  return { contas: linhas, total: roundBRL(linhas.reduce((s, l) => s + l.saldo, 0)) };
 }
 
 export interface GroupRow {

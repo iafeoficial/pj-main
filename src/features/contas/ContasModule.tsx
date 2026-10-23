@@ -510,22 +510,30 @@ export function ContasModule({
     }
   }
 
+  const paraTotais = useMemo(
+    () =>
+      filtradas.filter((c) => {
+        if (c.transferencia) return false;
+        if (filtroStatus !== "cancelada" && c.status === "cancelada") return false;
+        return true;
+      }),
+    [filtradas, filtroStatus]
+  );
+
   const totais = useMemo(() => {
-    const ativas = contas.filter((c) => c.status !== "cancelada" && !c.transferencia);
-    const total = ativas.reduce((s, c) => s + (c.valorDevido ?? c.valor), 0);
-    const baixado = ativas.reduce((s, c) => s + c.valorBaixado, 0);
-    const emAberto = ativas
+    const total = paraTotais.reduce((s, c) => s + (c.valorDevido ?? c.valor), 0);
+    const baixado = paraTotais.reduce((s, c) => s + c.valorBaixado, 0);
+    const emAberto = paraTotais
       .filter((c) => c.status !== config.statusBaixado)
       .reduce((s, c) => s + ((c.valorDevido ?? c.valor) - c.valorBaixado), 0);
     return { total, baixado, emAberto };
-  }, [contas, config.statusBaixado]);
+  }, [paraTotais, config.statusBaixado]);
 
   const totaisPorConta = useMemo(() => {
     if (!config.usaContaFinanceira) return [];
     const soma = new Map<string, number>();
     let semConta = 0;
-    for (const c of contas) {
-      if (c.status === "cancelada" || c.transferencia) continue;
+    for (const c of paraTotais) {
       const valor = c.valorDevido ?? c.valor;
       if (!c.contaFinanceiraId) semConta += valor;
       else soma.set(c.contaFinanceiraId, (soma.get(c.contaFinanceiraId) ?? 0) + valor);
@@ -537,7 +545,7 @@ export function ContasModule({
     }));
     if (semConta > 0) linhas.push({ id: "sem-conta", nome: "Sem conta", total: semConta });
     return linhas;
-  }, [contas, contasFinanceiras, config.usaContaFinanceira]);
+  }, [paraTotais, contasFinanceiras, config.usaContaFinanceira]);
 
   function resolveVincularCadastro(nome: string): boolean {
     if (!nome || !config.pessoaCadastro) return false;

@@ -6,12 +6,19 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+/** Arredonda para centavos e trata -0 / poeira de float como 0. */
+export function roundBRL(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const r = Math.round(value * 100) / 100;
+  return r === 0 ? 0 : r;
+}
+
 /** Formata um número como moeda BRL. */
 export function formatBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
     currency: "BRL",
-  }).format(Number.isFinite(value) ? value : 0);
+  }).format(roundBRL(value));
 }
 
 /** Formata data ISO (yyyy-MM-dd ou completa) para dd/MM/yyyy. */
