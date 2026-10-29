@@ -24,8 +24,15 @@ interface AuthContextValue {
   cancelarRecuperacao: () => Promise<void>;
 }
 
-function erroAuth(message: string): string {
+function erroAuth(message: string, contexto: "login" | "reset" = "reset"): string {
   const m = message.toLowerCase();
+  if (
+    m.includes("invalid login credentials") ||
+    m.includes("invalid credentials") ||
+    (contexto === "login" && m.includes("invalid"))
+  ) {
+    return "E-mail ou senha incorretos. Se não lembrar a senha, use “Esqueci minha senha”.";
+  }
   if (m.includes("rate limit") || m.includes("only request this") || m.includes("too many")) {
     return "Aguarde um instante antes de pedir outro e-mail.";
   }
@@ -41,7 +48,7 @@ function erroAuth(message: string): string {
   if (m.includes("redirect")) {
     return "Este endereço ainda não está liberado para recuperação de senha no Supabase.";
   }
-  if (m.includes("session") || m.includes("expired") || m.includes("invalid")) {
+  if (contexto === "reset" && (m.includes("session") || m.includes("expired") || m.includes("invalid"))) {
     return "O link expirou ou já foi usado. Peça um novo e-mail.";
   }
   return "Não foi possível concluir. Tente de novo.";
@@ -119,13 +126,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       passwordRecovery,
       async signIn(email, password) {
         if (!supabase) throw new Error("Supabase não configurado.");
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw new Error(error.message);
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (error) throw new Error(erroAuth(error.message, "login"));
       },
       async signUp(email, password) {
         if (!supabase) throw new Error("Supabase não configurado.");
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw new Error(error.message);
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        });
+        if (error) throw new Error(erroAuth(error.message, "login"));
         // Sem sessão imediata ⇒ confirmação de e-mail está habilitada no projeto.
         return { needsConfirmation: !data.session };
       },

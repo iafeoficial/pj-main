@@ -191,6 +191,8 @@ export interface ContaReceber extends OwnedEntity {
   dataRecebimento: string | null;
   status: ContaReceberStatus;
   observacao: string;
+  /** Número da NFS-e / documento fiscal (quando importado). */
+  numeroNf: string;
   /** Movimentação interna: não entra em totais, fluxo, DRE nem relatórios. */
   transferencia: boolean;
   createdBy: string;
@@ -243,18 +245,19 @@ export interface RegraConciliacao extends OwnedEntity {
 }
 
 // ---- Fase 3: Documentos ----
-export type DocumentoTipo = "nfe" | "boleto";
+export type DocumentoTipo = "nfe" | "boleto" | "nfse";
 
 export interface Documento extends OwnedEntity {
   tipo: DocumentoTipo;
   origem: string; // xml | ocr | linha_digitavel
   arquivoNome: string;
   emitente: string;
-  documento: string; // chave NF-e ou linha digitável
+  documento: string; // chave NF-e/NFS-e ou linha digitável
   valor: number | null;
   dataDocumento: string | null;
   dados: unknown; // payload bruto (itens etc.)
   contaPagarId: string | null;
+  contaReceberId: string | null;
   status: string; // importado | vinculado
 }
 

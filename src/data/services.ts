@@ -586,6 +586,7 @@ type ContaReceberInput = Omit<
   | "recorrencia"
   | "recorrenciaDias"
   | "grupoRecorrencia"
+  | "numeroNf"
 > & {
   valorRecebido?: number;
   dataRecebimento?: string | null;
@@ -598,6 +599,7 @@ type ContaReceberInput = Omit<
   recorrencia?: RecorrenciaTipo | null;
   recorrenciaDias?: number | null;
   grupoRecorrencia?: string | null;
+  numeroNf?: string;
   parcelas?: number;
   recorrenciaOcorrencias?: number;
   ajusteDiaNaoUtil?: AjusteDiaNaoUtil;
@@ -634,6 +636,7 @@ async function insertReceber(
   return contaReceberTable.create(empresaId, {
     ...rest,
     ...extras,
+    numeroNf: data.numeroNf ?? "",
     contaFinanceiraId: data.contaFinanceiraId ?? null,
     clienteId: data.clienteId ?? null,
     valorRecebido: data.valorRecebido ?? 0,

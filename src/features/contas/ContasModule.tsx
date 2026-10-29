@@ -61,6 +61,7 @@ import {
   ImpostosFields,
   ParcelasRepeticaoFields,
 } from "@/features/contas/ContasPagarExtras";
+import { ImportarNfseButton } from "@/features/contas/ImportarNfse";
 
 /** Forma comum de uma conta a pagar/receber para a UI. */
 export interface ContaLike {
@@ -229,12 +230,13 @@ export function ContasModule({
   config: ContasConfig;
   readOnly?: boolean;
 }) {
-  const { version, bumpData } = useEmpresa();
+  const { version, bumpData, empresaAtiva } = useEmpresa();
   const { notify } = useToast();
   const [searchParams] = useSearchParams();
   const highlightId = searchParams.get("id");
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
   const fileMovRef = useRef<HTMLInputElement>(null);
+  const nfseLado = config.categoriaTipo === "despesa" ? "pagar" : "receber";
   const [movOpen, setMovOpen] = useState(false);
   const [movPreview, setMovPreview] = useState<PreviewMovimentacao | null>(null);
   const [movImporting, setMovImporting] = useState(false);
@@ -959,6 +961,15 @@ export function ContasModule({
               <button className="btn-outline" onClick={() => fileMovRef.current?.click()}>
                 <Upload className="h-4 w-4" /> Importar planilha
               </button>
+              <ImportarNfseButton
+                empresaId={empresaId}
+                cnpjEmpresa={empresaAtiva?.cnpj ?? ""}
+                lado={nfseLado}
+                categorias={categorias}
+                centros={centros}
+                contasFinanceiras={contasFinanceiras}
+                onDone={bumpData}
+              />
               <button className="btn-primary" onClick={openCreate}>
                 <Plus className="h-4 w-4" /> Novo lançamento
               </button>
@@ -1055,13 +1066,22 @@ export function ContasModule({
         <EmptyState
           icon={config.icon}
           title="Nenhum lançamento"
-          description="Crie um lançamento, importe a planilha ou ajuste o filtro de status."
+          description="Crie um lançamento, importe planilha/XML ou ajuste o filtro de status."
           action={
             !readOnly ? (
               <div className="flex flex-wrap justify-center gap-2">
                 <button className="btn-outline" onClick={() => fileMovRef.current?.click()}>
                   <Upload className="h-4 w-4" /> Importar planilha
                 </button>
+                <ImportarNfseButton
+                  empresaId={empresaId}
+                  cnpjEmpresa={empresaAtiva?.cnpj ?? ""}
+                  lado={nfseLado}
+                  categorias={categorias}
+                  centros={centros}
+                  contasFinanceiras={contasFinanceiras}
+                  onDone={bumpData}
+                />
                 <button className="btn-primary" onClick={openCreate}>
                   <Plus className="h-4 w-4" /> Novo lançamento
                 </button>

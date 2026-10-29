@@ -39,6 +39,7 @@ const config: ContasConfig = {
       dataBaixa: c.dataRecebimento,
       status: c.status,
       observacao: c.observacao,
+      numeroNf: c.numeroNf,
       transferencia: c.transferencia,
     })),
   create: (empresaId, input) =>
@@ -49,6 +50,7 @@ const config: ContasConfig = {
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId ?? null,
       valor: input.valor,
+      numeroNf: input.numeroNf ?? "",
       dataCompetencia: input.dataCompetencia,
       dataVencimento: input.dataVencimento,
       status: input.status,
@@ -71,6 +73,7 @@ const config: ContasConfig = {
       centroCustoId: input.centroCustoId,
       contaFinanceiraId: input.contaFinanceiraId ?? null,
       valor: input.valor,
+      numeroNf: input.numeroNf ?? "",
       dataCompetencia: input.dataCompetencia,
       dataVencimento: input.dataVencimento,
       status: input.status,

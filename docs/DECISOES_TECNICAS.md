@@ -302,6 +302,18 @@ conta ou fatura, e o lote de arquivos costuma ser da mesma origem.
 **Implementação:** `usePersistedState`; `ContasModule`; migration
 `0030_extrato_conta_tipo.sql`; modal em `ConciliacaoPage`.
 
+## ADR-030 — Importação de NFS-e (XML) em Contas a Pagar/Receber
+**Decisão:** Contas a Pagar e Contas a Receber aceitam XML de NFS-e nacional (sped 1.01).
+A empresa ativa deve ser **tomador** na tela de pagar e **emitente/prestador** na de receber;
+caso contrário o XML é rejeitado. A chave (`infNFSe@Id`) é única por empresa em
+`documentos.documento` (índice parcial). `nNFSe` vai para `numero_nf` do título (exibição).
+Valor do lançamento = `vLiq`. Documento tipo `nfse` pode vincular `conta_pagar_id` ou
+`conta_receber_id`. Confirmação manual (categoria/vencimento) antes de gravar.
+**Motivo:** evitar lançamento duplicado e garantir que a nota pertence à empresa na
+vertente fiscal correta.
+**Implementação:** `src/lib/nfse.ts`; migration `0031_nfse_documentos.sql`;
+`documentoService` + botão Importar XML no ContasModule.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

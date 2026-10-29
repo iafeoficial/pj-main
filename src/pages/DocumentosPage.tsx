@@ -261,6 +261,8 @@ function Inner({ empresaId }: { empresaId: string }) {
                   <td className="px-4 py-3">
                     {d.contaPagarId ? (
                       <EntityLink type="conta-pagar" id={d.contaPagarId} label="Conta a pagar" />
+                    ) : d.contaReceberId ? (
+                      <EntityLink type="conta-receber" id={d.contaReceberId} label="Conta a receber" />
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
