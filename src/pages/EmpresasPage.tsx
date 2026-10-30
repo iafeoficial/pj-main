@@ -179,7 +179,9 @@ export function EmpresasPage() {
             {convitesPendentes.map((c) => (
               <li key={c.id} className="flex items-center justify-between gap-2 rounded-md bg-card px-3 py-2 text-sm">
                 <span>
-                  Você foi convidado como <strong>{PAPEL_LABEL[c.papel]}</strong>.
+                  Você foi convidado para{" "}
+                  <strong>{c.empresaNome || "uma empresa"}</strong> como{" "}
+                  <strong>{PAPEL_LABEL[c.papel]}</strong>.
                 </span>
                 <button className="btn-primary btn-sm" onClick={() => aceitarConvite(c)}>
                   Aceitar

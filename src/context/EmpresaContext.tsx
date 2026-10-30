@@ -11,7 +11,7 @@ import {
 import type { Empresa } from "@/types/domain";
 import type { Papel } from "@/lib/rbac";
 import { empresaService } from "@/data/services";
-import { membroService } from "@/data/membros";
+import { conviteService, membroService } from "@/data/membros";
 import { useAuth } from "./AuthContext";
 
 const ACTIVE_KEY = "financas_pj:empresa_ativa";
@@ -57,6 +57,11 @@ export function EmpresaProvider({ children }: { children: ReactNode }) {
     if (!initialLoadDone.current) setLoading(true);
     try {
       await membroService.vincularEmailIafe();
+      try {
+        await conviteService.aceitarPendentes();
+      } catch (e) {
+        console.warn("[empresa] convites pendentes:", e);
+      }
       const [lista, assoc] = await Promise.all([
         empresaService.list(),
         membroService.minhasAssociacoes(userId),

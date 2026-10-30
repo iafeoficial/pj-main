@@ -314,6 +314,17 @@ vertente fiscal correta.
 **Implementação:** `src/lib/nfse.ts`; migration `0031_nfse_documentos.sql`;
 `documentoService` + botão Importar XML no ContasModule.
 
+## ADR-031 — Convite de equipe envia e-mail
+**Decisão:** o convite continua sendo uma linha em `convites`. A Edge Function
+`enviar-convite` dispara o e-mail do Auth (convite de usuário novo, ou magic link
+se o e-mail já tem conta). Ao entrar, `aceitar_meus_convites_pendentes` aceita
+sozinho os convites daquele e-mail — o link do e-mail já entra na empresa, sem
+passo extra em Empresas. Ainda há **Reenviar** e o bloco em Empresas.
+**Motivo:** gravar só no banco fazia o toast dizer “enviado” sem cair na caixa;
+o magic link autenticava e a pessoa via só a empresa antiga.
+**Implementação:** `supabase/functions/enviar-convite`; migrations `0032`/`0033`;
+`conviteService` + `EmpresaContext.refreshEmpresas`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

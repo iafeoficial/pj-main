@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Building2, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { EmptyState } from "./ui/EmptyState";
@@ -32,5 +32,5 @@ export function RequireEmpresa({ children }: { children: (empresaId: string) => 
     );
   }
 
-  return <>{children(empresaAtiva.id)}</>;
+  return <Fragment key={empresaAtiva.id}>{children(empresaAtiva.id)}</Fragment>;
 }

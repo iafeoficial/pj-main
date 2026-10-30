@@ -21,6 +21,8 @@ export function useAsyncData<T>(
 
   useEffect(() => {
     let active = true;
+    setData(initial);
+    setError(null);
     setLoading(true);
     fn()
       .then((d) => {
@@ -30,7 +32,10 @@ export function useAsyncData<T>(
         }
       })
       .catch((e) => {
-        if (active) setError((e as Error).message);
+        if (active) {
+          setData(initial);
+          setError((e as Error).message);
+        }
       })
       .finally(() => {
         if (active) setLoading(false);

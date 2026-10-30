@@ -46,9 +46,10 @@ function Inner({ empresaId }: { empresaId: string }) {
     try {
       await conviteService.create(empresaId, email, novoPapel);
       bumpData();
-      notify("Convite enviado. O usuário aceita ao entrar com esse e-mail.");
+      notify("Convite enviado por e-mail. A pessoa aceita em Empresas depois de entrar.");
       setEmail("");
     } catch (e) {
+      bumpData();
       notify((e as Error).message, "error");
     }
   }
@@ -85,6 +86,15 @@ function Inner({ empresaId }: { empresaId: string }) {
     }
   }
 
+  async function reenviarConvite(c: Convite) {
+    try {
+      await conviteService.reenviar(empresaId, c.email);
+      notify(`E-mail reenviado para ${c.email}.`);
+    } catch (e) {
+      notify((e as Error).message, "error");
+    }
+  }
+
   const pendentes = convites.filter((c) => c.status === "pendente");
 
   return (
@@ -109,6 +119,10 @@ function Inner({ empresaId }: { empresaId: string }) {
           </Field>
           <button className="btn-primary" onClick={convidar}>Convidar</button>
         </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Enviamos um e-mail com o link. Quem já tem conta também vê o convite em{" "}
+          <strong>Empresas</strong> ao entrar com esse endereço.
+        </p>
       </div>
 
       {/* Membros */}
@@ -163,9 +177,18 @@ function Inner({ empresaId }: { empresaId: string }) {
                     </td>
                     <td className="px-4 py-3">{PAPEL_LABEL[c.papel]}</td>
                     <td className="px-4 py-3 text-right">
-                      <button className="btn-ghost btn-sm" onClick={() => cancelarConvite(c)}>
-                        <X className="h-4 w-4" /> Cancelar
-                      </button>
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <button
+                          type="button"
+                          className="btn-outline btn-sm"
+                          onClick={() => void reenviarConvite(c)}
+                        >
+                          <Mail className="h-3.5 w-3.5" /> Reenviar
+                        </button>
+                        <button className="btn-ghost btn-sm" onClick={() => cancelarConvite(c)}>
+                          <X className="h-4 w-4" /> Cancelar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
