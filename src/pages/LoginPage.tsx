@@ -7,7 +7,7 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 function BrandMark({ className = "" }: { className?: string }) {
   return (
     <img
-      src="/logo-iafe-lockup-on-dark.png"
+      src="/logo-iafe-lockup-on-dark.png?v=2"
       alt="IAFÉ PJ"
       className={`h-12 w-auto max-w-[15rem] object-contain object-left ${className}`}
     />

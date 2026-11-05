@@ -323,7 +323,7 @@ export function AppShell() {
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border/80 bg-white md:flex">
           <div className="flex items-center gap-3 px-4 py-5">
             <img
-              src="/logo-iafe-lockup.png"
+              src="/logo-iafe-lockup.png?v=2"
               alt="IAFÉ PJ"
               className="h-11 w-auto max-w-[12rem] shrink-0 object-contain object-left"
             />
@@ -353,7 +353,7 @@ export function AppShell() {
           <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-xl">
             <div className="flex items-center justify-between gap-3 px-4 py-4">
               <img
-                src="/logo-iafe-lockup.png"
+                src="/logo-iafe-lockup.png?v=2"
                 alt="IAFÉ PJ"
                 className="h-10 w-auto max-w-[12rem] shrink-0 object-contain object-left"
               />
@@ -389,13 +389,13 @@ export function AppShell() {
               </button>
             )}
             <img
-              src="/logo-iafe-lockup.png"
+              src="/logo-iafe-lockup.png?v=2"
               alt="IAFÉ PJ"
               className="h-8 w-auto max-w-[10rem] shrink-0 object-contain object-left md:hidden"
             />
             {!sidebarOpen && (
               <img
-                src="/logo-iafe-lockup.png"
+                src="/logo-iafe-lockup.png?v=2"
                 alt="IAFÉ PJ"
                 className="hidden h-9 w-auto max-w-[11rem] shrink-0 object-contain object-left md:inline"
               />
