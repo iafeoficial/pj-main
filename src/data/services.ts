@@ -47,8 +47,20 @@ export const empresaService = {
     return empresaTable.list({ column: "nome_fantasia" });
   },
   find: (id: string) => empresaTable.find(id),
-  async create(data: Omit<Empresa, "id" | "createdAt" | "updatedAt">): Promise<Empresa> {
-    const e = await empresaTable.create(data);
+  async create(
+    data: Omit<
+      Empresa,
+      | "id"
+      | "createdAt"
+      | "updatedAt"
+      | "acessoInicio"
+      | "acessoFim"
+      | "acessoBloqueado"
+      | "acessoMotivo"
+    >
+  ): Promise<Empresa> {
+    // Período grátis (30 dias) vem do trigger no banco.
+    const e = await empresaTable.create(data as Omit<Empresa, "id" | "createdAt" | "updatedAt">);
     await logAudit({
       empresaId: e.id,
       entidade: "Empresa",

@@ -34,13 +34,16 @@ import {
   ChevronDown,
   PanelLeftClose,
   PanelLeft,
+  Shield,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Users2 } from "lucide-react";
 import { EmpresaSelector } from "./EmpresaSelector";
+import { OnboardingGuideButton } from "./OnboardingGuide";
 import { useAuth } from "@/context/AuthContext";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { can, canWrite, PAPEL_LABEL, type Capability } from "@/lib/rbac";
+import { isPlataformaAdminEmail } from "@/lib/acesso";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -270,10 +273,27 @@ export function AppShell() {
     }
   }, [sidebarOpen]);
 
-  const sections = SECTIONS.map((s) => ({
-    ...s,
-    items: s.items.filter((it) => itemVisible(papel, it.cap)),
-  })).filter((s) => s.items.length > 0);
+  const sections = [
+    ...SECTIONS.map((s) => ({
+      ...s,
+      items: s.items.filter((it) => itemVisible(papel, it.cap)),
+    })).filter((s) => s.items.length > 0),
+    ...(isPlataformaAdminEmail(user?.email)
+      ? [
+          {
+            title: "Plataforma",
+            items: [
+              {
+                to: "/admin-plataforma",
+                label: "Admin plataforma",
+                icon: Shield,
+                cap: "dashboard" as Capability,
+              },
+            ],
+          },
+        ]
+      : []),
+  ];
   const readOnly = papel != null && !canWrite(papel);
 
   const userFooter = (
@@ -301,13 +321,12 @@ export function AppShell() {
       {/* Desktop sidebar */}
       {sidebarOpen && (
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border/80 bg-white md:flex">
-          <div className="flex items-center gap-3 px-4 py-5">
-            <img src="/logo-iafe.png" alt="IAFÉ" className="h-10 w-10 object-contain" />
-            <div className="min-w-0 flex-1 leading-tight">
-              <p className="font-display text-base font-semibold tracking-tight text-primary">
-                IAFÉ PJ
-              </p>
-            </div>
+          <div className="flex items-center gap-2 px-4 py-5">
+            <img
+              src="/logo-iafe.png"
+              alt="IAFÉ PJ"
+              className="h-10 w-auto max-w-[10.5rem] flex-1 object-contain object-left"
+            />
             <button
               type="button"
               className="btn-ghost btn-sm shrink-0 text-muted-foreground"
@@ -332,13 +351,12 @@ export function AppShell() {
             onClick={() => setDrawerOpen(false)}
           />
           <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-xl">
-            <div className="flex items-center justify-between px-4 py-4">
-              <div className="flex items-center gap-3">
-                <img src="/logo-iafe.png" alt="IAFÉ" className="h-9 w-9 object-contain" />
-                <span className="font-display text-base font-semibold tracking-tight text-primary">
-                  IAFÉ PJ
-                </span>
-              </div>
+            <div className="flex items-center justify-between gap-2 px-4 py-4">
+              <img
+                src="/logo-iafe.png"
+                alt="IAFÉ PJ"
+                className="h-9 w-auto max-w-[10rem] object-contain object-left"
+              />
               <button className="btn-ghost btn-sm text-muted-foreground" onClick={() => setDrawerOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
@@ -370,12 +388,21 @@ export function AppShell() {
                 <PanelLeft className="h-5 w-5" />
               </button>
             )}
-            <span className="font-display text-sm font-semibold tracking-tight md:hidden">IAFÉ PJ</span>
+            <img
+              src="/logo-iafe.png"
+              alt="IAFÉ PJ"
+              className="h-7 w-auto max-w-[8.5rem] object-contain object-left md:hidden"
+            />
             {!sidebarOpen && (
-              <span className="hidden font-display text-sm font-semibold tracking-tight md:inline">IAFÉ PJ</span>
+              <img
+                src="/logo-iafe.png"
+                alt="IAFÉ PJ"
+                className="hidden h-8 w-auto max-w-[9.5rem] object-contain object-left md:inline"
+              />
             )}
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-1.5">
+            <OnboardingGuideButton />
             <EmpresaSelector />
           </div>
         </header>

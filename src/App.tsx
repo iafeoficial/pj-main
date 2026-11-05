@@ -36,11 +36,14 @@ import { MembrosPage } from "@/pages/MembrosPage";
 import { AuditoriaPage } from "@/pages/AuditoriaPage";
 import { FeriadosPage } from "@/pages/FeriadosPage";
 import { RequireCapability } from "@/components/RequireCapability";
+import { ContaBloqueada } from "@/components/ContaBloqueada";
+import { AdminPlataformaPage } from "@/pages/AdminPlataformaPage";
 
 function Gate() {
-  const { session, loading, passwordRecovery } = useAuth();
+  const { session, loading, passwordRecovery, profile, profileLoading } = useAuth();
 
-  if (loading) {
+  // Com sessão, só libera a UI depois de ler o perfil (bloqueio de conta).
+  if (loading || (session && profileLoading)) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -49,6 +52,9 @@ function Gate() {
   }
 
   if (!session || passwordRecovery) return <LoginPage />;
+
+  // Sem perfil ou bloqueado: não entra na plataforma.
+  if (!profile || profile.bloqueado) return <ContaBloqueada />;
 
   return (
     <EmpresaProvider>
@@ -84,6 +90,7 @@ function Gate() {
           <Route path="feriados" element={<FeriadosPage />} />
           <Route path="contas-cartoes" element={<ContasCartoesPage />} />
           <Route path="auditoria" element={<AuditoriaPage />} />
+          <Route path="admin-plataforma" element={<AdminPlataformaPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

@@ -32,6 +32,23 @@ export interface Empresa extends BaseEntity, Endereco {
   email: string;
   telefone: string;
   status: EmpresaStatus;
+  /** Início do período liberado (ISO). */
+  acessoInicio: string | null;
+  /** Fim do período (ISO). null = sem prazo. */
+  acessoFim: string | null;
+  /** Bloqueio manual imediato (IAFÉ). */
+  acessoBloqueado: boolean;
+  acessoMotivo: string | null;
+}
+
+/** Perfil de acesso do usuário na plataforma (1:1 com auth.users). */
+export interface UserProfile {
+  userId: string;
+  email: string;
+  bloqueado: boolean;
+  bloqueadoMotivo: string | null;
+  bloqueadoEm: string | null;
+  createdAt: string;
 }
 
 // ---- Entidades isoladas por empresa ----

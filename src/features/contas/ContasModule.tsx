@@ -1191,12 +1191,12 @@ export function ContasModule({
         />
         )
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="card max-md:overflow-x-auto md:overflow-visible">
+          <table className="w-full min-w-[40rem] text-sm md:min-w-0 md:table-fixed">
             <thead className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               <tr>
                 {!readOnly && (
-                  <th className="w-10 px-3 py-3">
+                  <th className="w-10 px-2 py-3 md:px-3">
                     <input
                       type="checkbox"
                       className="rounded border-border"
@@ -1209,16 +1209,16 @@ export function ContasModule({
                     />
                   </th>
                 )}
-                <th className="px-4 py-3">{config.pessoaLabel}</th>
-                <th className="px-4 py-3">Categoria</th>
+                <th className="px-3 py-3 md:px-4">{config.pessoaLabel}</th>
+                <th className="px-3 py-3 md:px-4">Categoria</th>
                 {config.usaContaFinanceira && (
-                  <th className="px-4 py-3">Conta / Cartão</th>
+                  <th className="px-3 py-3 md:px-4">Conta / Cartão</th>
                 )}
-                <th className="px-4 py-3">Vencimento</th>
-                <th className="px-4 py-3 text-right">Valor</th>
-                <th className="px-4 py-3 text-right">Saldo</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Ações</th>
+                <th className="whitespace-nowrap px-3 py-3 md:px-4">Vencimento</th>
+                <th className="px-3 py-3 text-right md:px-4">Valor</th>
+                <th className="px-3 py-3 text-right md:px-4">Saldo</th>
+                <th className="px-3 py-3 md:px-4">Status</th>
+                <th className="px-3 py-3 text-right md:px-4">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1248,15 +1248,17 @@ export function ContasModule({
                         />
                       </td>
                     )}
-                    <td className="px-4 py-3">
+                    <td className="max-w-0 px-3 py-3 md:px-4">
                       {(() => {
                         const cadastro = cadastroDaConta(c);
                         const detalhe = [cadastro?.cnpjCpf, cadastro?.telefone].filter(Boolean).join(" · ");
                         return (
                           <>
-                            <div className="font-medium">{cadastro?.nome || c.pessoa}</div>
+                            <div className="truncate font-medium" title={cadastro?.nome || c.pessoa}>
+                              {cadastro?.nome || c.pessoa}
+                            </div>
                             {detalhe && (
-                              <div className="text-xs text-muted-foreground">{detalhe}</div>
+                              <div className="truncate text-xs text-muted-foreground">{detalhe}</div>
                             )}
                           </>
                         );
@@ -1272,7 +1274,9 @@ export function ContasModule({
                         </div>
                       )}
                       {c.observacao && (
-                        <div className="text-xs text-muted-foreground">{c.observacao}</div>
+                        <div className="truncate text-xs text-muted-foreground" title={c.observacao}>
+                          {c.observacao}
+                        </div>
                       )}
                       {(() => {
                         const ref = c.observacao ? parseContaOrigem(c.observacao) : null;
@@ -1291,11 +1295,11 @@ export function ContasModule({
                         );
                       })()}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
+                    <td className="truncate px-3 py-3 text-muted-foreground md:px-4">
                       {c.categoriaId ? catMap.get(c.categoriaId) ?? "—" : "—"}
                     </td>
                     {config.usaContaFinanceira && (
-                      <td className="px-4 py-3 text-muted-foreground">
+                      <td className="truncate px-3 py-3 text-muted-foreground md:px-4">
                       {c.contaFinanceiraId
                         ? (() => {
                             const cf = contaFinMap.get(c.contaFinanceiraId);
@@ -1304,14 +1308,14 @@ export function ContasModule({
                         : "—"}
                     </td>
                     )}
-                    <td className="px-4 py-3">{formatDate(c.dataVencimento)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{formatBRL(devido)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums">{formatBRL(saldo)}</td>
-                    <td className="px-4 py-3">
+                    <td className="whitespace-nowrap px-3 py-3 md:px-4">{formatDate(c.dataVencimento)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums md:px-4">{formatBRL(devido)}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums md:px-4">{formatBRL(saldo)}</td>
+                    <td className="px-3 py-3 md:px-4">
                       <StatusBadge status={c.status} />
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-1">
+                    <td className="px-3 py-3 md:px-4">
+                      <div className="flex flex-wrap justify-end gap-1">
                         {!readOnly && baixavel && (
                           <button
                             className="btn-outline btn-sm"

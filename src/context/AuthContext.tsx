@@ -7,13 +7,18 @@ import {
   type ReactNode,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import type { UserProfile } from "@/types/domain";
 import { supabase } from "@/lib/supabase";
 import { setCurrentUser } from "@/data/audit";
+import { plataformaService } from "@/data/plataforma";
 
 interface AuthContextValue {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  /** Perfil (bloqueio de conta). null enquanto carrega ou sem sessão. */
+  profile: UserProfile | null;
+  profileLoading: boolean;
   /** Verdadeiro enquanto o usuário chegou pelo link de recuperação de senha. */
   passwordRecovery: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -22,6 +27,7 @@ interface AuthContextValue {
   requestPasswordReset: (email: string) => Promise<void>;
   updatePassword: (password: string) => Promise<void>;
   cancelarRecuperacao: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 function erroAuth(message: string, contexto: "login" | "reset" = "reset"): string {
@@ -69,7 +75,36 @@ const Ctx = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  /** true até a 1ª leitura do perfil da sessão atual terminar (bloqueio seguro). */
+  const [profileLoading, setProfileLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+
+  async function carregarProfile(userId: string | undefined) {
+    if (!userId || !supabase) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+    setProfileLoading(true);
+    try {
+      const p = await plataformaService.getMeuProfile();
+      setProfile(p);
+    } catch (e) {
+      console.warn("[auth] perfil:", e);
+      // Falha de leitura: não liberar a plataforma; perfil “virtual” bloqueado.
+      setProfile({
+        userId,
+        email: "",
+        bloqueado: true,
+        bloqueadoMotivo: "Não foi possível validar o acesso da conta. Tente de novo ou fale com o suporte IAFÉ.",
+        bloqueadoEm: null,
+        createdAt: new Date().toISOString(),
+      });
+    } finally {
+      setProfileLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!supabase) {
@@ -93,7 +128,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       setSession(data.session);
       setCurrentUser(data.session?.user.email ?? null);
-      setLoading(false);
+      await carregarProfile(data.session?.user?.id);
+      if (!cancelled) setLoading(false);
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
@@ -107,6 +143,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           s?.user?.id === prev.user.id
         ) {
           return s;
+        }
+        if (event !== "TOKEN_REFRESHED") {
+          void carregarProfile(s?.user?.id);
+        } else if (s?.user?.id !== prev?.user?.id) {
+          void carregarProfile(s?.user?.id);
         }
         return s;
       });
@@ -123,7 +164,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: session?.user ?? null,
       session,
       loading,
+      profile,
+      profileLoading,
       passwordRecovery,
+      async refreshProfile() {
+        await carregarProfile(session?.user?.id);
+      },
       async signIn(email, password) {
         if (!supabase) throw new Error("Supabase não configurado.");
         const { error } = await supabase.auth.signInWithPassword({
@@ -166,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (supabase) await supabase.auth.signOut();
       },
     }),
-    [session, loading, passwordRecovery]
+    [session, loading, profile, profileLoading, passwordRecovery]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

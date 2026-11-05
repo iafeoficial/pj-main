@@ -334,6 +334,18 @@ do grupo/categoria (heurística), sem coluna nova no schema — o restante das d
 contas a pagar/receber por competência.
 **Implementação:** `getDRE` em `analytics.ts`; `DREPage.tsx`.
 
+## ADR-033 — Período de acesso, bloqueio e guia leigo
+**Decisão:** o fluxo criar conta → criar empresa permanece. Novas colunas em `empresas`
+(`acesso_inicio`, `acesso_fim`, `acesso_bloqueado`, `acesso_motivo`) e tabela `profiles`
+(bloqueio de usuário). Nova empresa ganha **30 dias** grátis via trigger. Admin de plataforma
+= e-mail `@iafeoficial.com` (página `/admin-plataforma` + RPCs). Gate/RequireEmpresa e RLS
+(`user_can_read_dados` / `user_can_write` + `empresa_acesso_ok`) respeitam período e bloqueio.
+Guia “Como começar” no header (texto leigo, abre 1×). Sem gateway de pagamento neste ADR.
+**Motivo:** liberar teste controlado e cortar acesso ao fim do grátis / inadimplência sem mudar
+o onboarding.
+**Implementação:** migration `0034_acesso_periodo_bloqueio.sql`; `plataforma.ts`;
+`OnboardingGuide`; `AdminPlataformaPage`; `lib/acesso.ts`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.
