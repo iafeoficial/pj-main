@@ -6,13 +6,11 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 
 function BrandMark({ className = "" }: { className?: string }) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
-      <img src="/logo-iafe-mark.png" alt="IAFÉ" className="h-11 w-11 object-contain" />
-      <div className="leading-none">
-        <p className="font-display text-2xl font-semibold tracking-tight text-white">IAFÉ</p>
-        <p className="mt-0.5 font-sans text-xs font-medium tracking-[0.35em] text-brand-highlight">P J</p>
-      </div>
-    </div>
+    <img
+      src="/logo-iafe-lockup-on-dark.png"
+      alt="IAFÉ PJ"
+      className={`h-12 w-auto max-w-[15rem] object-contain object-left ${className}`}
+    />
   );
 }
 
