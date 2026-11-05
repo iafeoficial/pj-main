@@ -5,13 +5,14 @@ import { Field } from "@/components/ui/Field";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
 function BrandMark({ className = "" }: { className?: string }) {
-  // Fundo escuro do painel: clareia a marca (texto verde profundo) para contraste.
   return (
-    <img
-      src="/logo-iafe.png"
-      alt="IAFÉ PJ"
-      className={`h-12 w-auto max-w-[14rem] object-contain object-left brightness-0 invert ${className}`}
-    />
+    <div className={`flex items-center gap-3 ${className}`}>
+      <img src="/logo-iafe-mark.png" alt="IAFÉ" className="h-11 w-11 object-contain" />
+      <div className="leading-none">
+        <p className="font-display text-2xl font-semibold tracking-tight text-white">IAFÉ</p>
+        <p className="mt-0.5 font-sans text-xs font-medium tracking-[0.35em] text-brand-highlight">P J</p>
+      </div>
+    </div>
   );
 }
 
@@ -19,10 +20,10 @@ function BrandPanel() {
   return (
     <aside className="relative flex flex-col overflow-hidden bg-primary px-8 py-8 text-primary-foreground md:min-h-screen md:justify-between md:px-12 md:py-12">
       <img
-        src="/logo-iafe.png"
+        src="/logo-iafe-mark.png"
         alt=""
         aria-hidden
-        className="pointer-events-none absolute -bottom-8 -right-10 h-[22rem] w-[22rem] object-contain opacity-[0.1] brightness-0 invert"
+        className="pointer-events-none absolute -bottom-8 -right-10 h-[22rem] w-[22rem] object-contain opacity-[0.08]"
       />
       <div className="relative z-10">
         <BrandMark />
