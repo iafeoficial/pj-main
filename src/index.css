@@ -4,32 +4,37 @@
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* IAFÉ PJ — Identidade Visual V2
+       #143D2B profundo | #5E9C78 símbolo | #8CCBA5 destaque | #DCEBE2 sálvia | #FFFFFF */
+    --background: 140 16% 96%;
+    --foreground: 154 51% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 173 80% 28%;
+    --card-foreground: 154 51% 16%;
+    --primary: 154 51% 16%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 173 60% 94%;
-    --accent-foreground: 173 80% 22%;
+    --secondary: 144 27% 89%;
+    --secondary-foreground: 154 51% 16%;
+    --muted: 144 20% 93%;
+    --muted-foreground: 154 18% 38%;
+    --accent: 144 27% 89%;
+    --accent-foreground: 154 51% 16%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 38%;
+    --success: 145 25% 40%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
+    --warning: 38 92% 46%;
     --warning-foreground: 0 0% 100%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 173 80% 28%;
-    --radius: 0.6rem;
+    --border: 144 18% 86%;
+    --input: 144 18% 86%;
+    --ring: 145 25% 49%;
+    --brand-symbol: 145 25% 49%;
+    --brand-highlight: 144 38% 67%;
+    --brand-sage: 144 27% 89%;
+    --radius: 0.625rem;
     --scrollbar-size: 6px;
     --scrollbar-track: hsl(var(--muted));
-    --scrollbar-thumb: hsl(214 28% 78%);
-    --scrollbar-thumb-hover: hsl(173 45% 58%);
+    --scrollbar-thumb: hsl(144 14% 72%);
+    --scrollbar-thumb-hover: hsl(145 25% 49%);
   }
 
   * {
@@ -63,10 +68,15 @@
   }
 
   body {
-    @apply bg-background text-foreground;
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      Helvetica, Arial, sans-serif;
+    @apply bg-background text-foreground font-sans;
     -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: Montserrat, ui-sans-serif, system-ui, sans-serif;
   }
 }
 
@@ -101,7 +111,7 @@
   }
 
   .input {
-    @apply flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm
+    @apply flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm
       shadow-sm transition-colors placeholder:text-muted-foreground
       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
       disabled:cursor-not-allowed disabled:opacity-50;
@@ -112,5 +122,26 @@
 
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .kpi-value {
+    @apply font-display text-lg font-semibold tabular-nums tracking-tight;
+  }
+
+  /* Balões do manual — primeiro destaque em sálvia/verde IAFÉ */
+  .kpi-balloon {
+    @apply rounded-lg border border-border bg-card px-4 py-3.5 text-card-foreground shadow-sm;
+  }
+  .kpi-balloon-featured {
+    @apply rounded-lg border border-transparent bg-secondary px-4 py-3.5 text-primary shadow-sm;
+  }
+  .kpi-balloon-featured .kpi-label {
+    @apply text-primary/70;
+  }
+  .kpi-balloon-featured .kpi-value {
+    @apply text-primary;
+  }
+  .kpi-label {
+    @apply text-xs text-muted-foreground;
   }
 }

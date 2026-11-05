@@ -19,7 +19,16 @@ import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
 import { useFormDraft } from "@/hooks/useFormDraft";
 import { usePersistedState } from "@/hooks/usePersistedState";
-import { formatBRL, formatDate, isValidCNPJ, isValidCPF, normalizeCNPJ, today } from "@/lib/utils";
+import {
+  formatBRL,
+  formatDate,
+  isValidCNPJ,
+  isValidCPF,
+  normalizeCNPJ,
+  today,
+  STATUS_LABEL,
+  cn,
+} from "@/lib/utils";
 import { combinaBusca, partesData, partesValor } from "@/lib/busca";
 import { formatCpfCnpj } from "@/lib/masks";
 import { emptyParceiroForm, parceiroToPayload } from "@/features/cadastros/ParceiroForm";
@@ -220,6 +229,47 @@ function ListaMovimento({
     </div>
   );
 }
+
+function dataLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function shiftIsoDays(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return dataLocal(d);
+}
+
+/** Período imediatamente anterior, com a mesma duração (igual Dashboard). */
+function periodoAnterior(inicio: string, fim: string): { inicio: string; fim: string } {
+  const a = new Date(`${inicio}T00:00:00`);
+  const b = new Date(`${fim}T00:00:00`);
+  const dias = Math.max(1, Math.round((b.getTime() - a.getTime()) / 86400000) + 1);
+  const fimAnt = shiftIsoDays(inicio, -1);
+  const inicioAnt = shiftIsoDays(fimAnt, -(dias - 1));
+  return { inicio: inicioAnt, fim: fimAnt };
+}
+
+function formatPctDelta(pct: number | null): string | null {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  const rounded = Math.round(pct);
+  if (rounded === 0) return "0%";
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
+const STATUS_PILL_LABEL: Record<string, string> = {
+  todos: "Todos",
+  aberta: "Abertas",
+  parcial: "Parciais",
+  paga: "Pagas",
+  recebida: "Recebidas",
+  vencida: "Vencidas",
+  rascunho: "Rascunhos",
+  cancelada: "Canceladas",
+};
 
 export function ContasModule({
   empresaId,
@@ -530,6 +580,36 @@ export function ContasModule({
       .reduce((s, c) => s + ((c.valorDevido ?? c.valor) - c.valorBaixado), 0);
     return { total, baixado, emAberto };
   }, [paraTotais, config.statusBaixado]);
+
+  const pctVsAnterior = useMemo(() => {
+    if (!inicio || !fim) return null;
+    const ant = periodoAnterior(inicio, fim);
+    const porStatus =
+      filtroStatus === "todos" ? contas : contas.filter((c) => c.status === filtroStatus);
+    const noPeriodoAnt = porStatus.filter((c) => {
+      if (c.dataVencimento < ant.inicio || c.dataVencimento > ant.fim) return false;
+      if (c.transferencia) return false;
+      if (filtroStatus !== "cancelada" && c.status === "cancelada") return false;
+      return true;
+    });
+    const totalAnt = noPeriodoAnt.reduce((s, c) => s + (c.valorDevido ?? c.valor), 0);
+    if (totalAnt === 0) return totais.total === 0 ? 0 : 100;
+    return ((totais.total - totalAnt) / Math.abs(totalAnt)) * 100;
+  }, [inicio, fim, contas, filtroStatus, totais.total]);
+
+  const temVencimentoProximo = useMemo(() => {
+    const hoje = today();
+    const limite = shiftIsoDays(hoje, 7);
+    return paraTotais.some((c) => {
+      if (c.status === config.statusBaixado || c.status === "cancelada") return false;
+      const saldo = (c.valorDevido ?? c.valor) - c.valorBaixado;
+      if (saldo <= 0) return false;
+      return c.dataVencimento >= hoje && c.dataVencimento <= limite;
+    });
+  }, [paraTotais, config.statusBaixado]);
+
+  const progressoBaixado =
+    totais.total > 0 ? Math.min(100, Math.round((totais.baixado / totais.total) * 100)) : 0;
 
   const totaisPorConta = useMemo(() => {
     if (!config.usaContaFinanceira) return [];
@@ -979,9 +1059,24 @@ export function ContasModule({
       />
 
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <SummaryCard label="Total" value={formatBRL(totais.total)} />
-        <SummaryCard label={`Já ${config.statusBaixado === "paga" ? "pago" : "recebido"}`} value={formatBRL(totais.baixado)} tone="success" />
-        <SummaryCard label="Em aberto" value={formatBRL(totais.emAberto)} tone="warning" />
+        <SummaryCard
+          label={config.statusBaixado === "paga" ? "Total a pagar" : "Total a receber"}
+          value={formatBRL(totais.total)}
+          featuredDeep
+          pctBadge={formatPctDelta(pctVsAnterior)}
+        />
+        <SummaryCard
+          label={`Já ${config.statusBaixado === "paga" ? "pago" : "recebido"}`}
+          value={formatBRL(totais.baixado)}
+          tone="success"
+          progress={progressoBaixado}
+        />
+        <SummaryCard
+          label="Em aberto"
+          value={formatBRL(totais.emAberto)}
+          tone="warning"
+          subtitle={temVencimentoProximo ? "Vencimento próximo" : undefined}
+        />
       </div>
 
       {totaisPorConta.length > 0 && (
@@ -993,24 +1088,27 @@ export function ContasModule({
       )}
 
       <div className="card mb-3 flex flex-wrap items-end gap-4 p-4">
+        <div className="min-w-[16rem] flex-[2]">
+          <BuscaCampo
+            value={busca}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), busca: v }))}
+            placeholder="Buscar por nome, documento, valor…"
+          />
+        </div>
         <Field label="Início">
           <DatePicker
             value={inicio}
             onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), inicio: v }))}
+            placeholder="dd/mm/aaaa"
           />
         </Field>
         <Field label="Fim">
           <DatePicker
             value={fim}
             onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), fim: v }))}
+            placeholder="dd/mm/aaaa"
           />
         </Field>
-        <div className="min-w-[16rem] flex-1">
-          <BuscaCampo
-            value={busca}
-            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltros(f), busca: v }))}
-          />
-        </div>
         {(inicio || fim) && (
           <button
             type="button"
@@ -1026,14 +1124,16 @@ export function ContasModule({
         {STATUS_OPTS.map((s) => (
           <button
             key={s}
+            type="button"
             onClick={() => setFiltros((f) => ({ ...normalizarFiltros(f), status: s }))}
-            className={`badge cursor-pointer capitalize ${
+            className={cn(
+              "rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",
               filtroStatus === s
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-accent"
-            }`}
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-muted/70 text-muted-foreground hover:bg-accent hover:text-foreground"
+            )}
           >
-            {s === "todos" ? "Todos" : s}
+            {STATUS_PILL_LABEL[s] ?? STATUS_LABEL[s] ?? s}
           </button>
         ))}
         {!readOnly && selectedIds.size > 0 && (
@@ -1093,10 +1193,10 @@ export function ContasModule({
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="border-b border-border bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+            <thead className="border-b border-border text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               <tr>
                 {!readOnly && (
-                  <th className="w-10 px-3 py-2.5">
+                  <th className="w-10 px-3 py-3">
                     <input
                       type="checkbox"
                       className="rounded border-border"
@@ -1109,16 +1209,16 @@ export function ContasModule({
                     />
                   </th>
                 )}
-                <th className="px-4 py-2.5 font-medium">{config.pessoaLabel}</th>
-                <th className="px-4 py-2.5 font-medium">Categoria</th>
+                <th className="px-4 py-3">{config.pessoaLabel}</th>
+                <th className="px-4 py-3">Categoria</th>
                 {config.usaContaFinanceira && (
-                  <th className="px-4 py-2.5 font-medium">Conta / Cartão</th>
+                  <th className="px-4 py-3">Conta / Cartão</th>
                 )}
-                <th className="px-4 py-2.5 font-medium">Vencimento</th>
-                <th className="px-4 py-2.5 text-right font-medium">Valor</th>
-                <th className="px-4 py-2.5 text-right font-medium">Saldo</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 text-right font-medium">Ações</th>
+                <th className="px-4 py-3">Vencimento</th>
+                <th className="px-4 py-3 text-right">Valor</th>
+                <th className="px-4 py-3 text-right">Saldo</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3 text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -1257,6 +1357,10 @@ export function ContasModule({
               })}
             </tbody>
           </table>
+          <div className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+            Mostrando {filtradas.length === 0 ? "0" : `1–${filtradas.length}`} de{" "}
+            {filtradas.length} lançamento{filtradas.length === 1 ? "" : "s"}
+          </div>
         </div>
       )}
 
@@ -1863,22 +1967,73 @@ function SummaryCard({
   value,
   tone,
   compact,
+  featuredDeep,
+  pctBadge,
+  progress,
+  subtitle,
 }: {
   label: string;
   value: string;
   tone?: "success" | "warning";
   compact?: boolean;
+  featuredDeep?: boolean;
+  pctBadge?: string | null;
+  progress?: number;
+  subtitle?: string;
 }) {
+  if (featuredDeep) {
+    return (
+      <div className="rounded-lg bg-primary px-4 py-3.5 text-primary-foreground shadow-sm">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-medium text-white/75">{label}</p>
+          {pctBadge != null && (
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums",
+                pctBadge.startsWith("-")
+                  ? "bg-white/15 text-white/90"
+                  : "bg-brand-highlight/90 text-primary"
+              )}
+            >
+              {pctBadge}
+            </span>
+          )}
+        </div>
+        <p className="mt-1 font-display text-xl font-semibold tabular-nums tracking-tight text-white">
+          {value}
+        </p>
+      </div>
+    );
+  }
+
   const color =
     tone === "success"
-      ? "text-emerald-600"
+      ? "text-success"
       : tone === "warning"
-      ? "text-amber-600"
-      : "text-foreground";
+        ? "text-[#A67B70]"
+        : "text-foreground";
+
   return (
-    <div className="card px-4 py-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 font-semibold tabular-nums ${compact ? "text-base" : "text-lg"} ${color}`}>{value}</p>
+    <div className="kpi-balloon">
+      <p className="kpi-label">{label}</p>
+      <p className={`kpi-value mt-1 ${compact ? "!text-base" : ""} ${color}`}>{value}</p>
+      {progress != null && (
+        <div className="mt-2.5">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Progresso</span>
+            <span className="tabular-nums">{progress}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-[width]"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {subtitle && (
+        <p className="mt-2 text-[11px] font-medium text-[#A67B70]">{subtitle}</p>
+      )}
     </div>
   );
 }

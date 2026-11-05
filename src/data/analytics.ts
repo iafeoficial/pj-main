@@ -247,6 +247,9 @@ export interface LancamentoFluxo {
   valor: number;
   tipo: "entrada" | "saida";
   parceiroId: string | null;
+  contaFinanceiraId: string | null;
+  contaNome: string;
+  status: string;
 }
 
 /** Lançamentos que compõem o fluxo do período, na mesma regra do gráfico. */
@@ -256,11 +259,13 @@ export async function listarLancamentosFluxo(
   fim: string,
   contaId?: string | null
 ): Promise<LancamentoFluxo[]> {
-  const [pagarAll, receberAll, transferencias] = await Promise.all([
+  const [pagarAll, receberAll, contasFin, transferencias] = await Promise.all([
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
+    contaFinanceiraService.list(empresaId),
     contaId ? transferenciaService.list(empresaId) : Promise.resolve([]),
   ]);
+  const nomeConta = new Map(contasFin.map((c) => [c.id, labelContaFinanceira(c)]));
   const noMes = (iso: string) => iso >= inicio && iso <= fim;
   const linhas: LancamentoFluxo[] = [];
 
@@ -276,6 +281,9 @@ export async function listarLancamentosFluxo(
       valor: c.valor,
       tipo: "entrada",
       parceiroId: c.clienteId,
+      contaFinanceiraId: c.contaFinanceiraId,
+      contaNome: c.contaFinanceiraId ? nomeConta.get(c.contaFinanceiraId) ?? "—" : "Sem conta",
+      status: c.status,
     });
   }
   for (const c of pagarAll) {
@@ -290,6 +298,9 @@ export async function listarLancamentosFluxo(
       valor: c.valor,
       tipo: "saida",
       parceiroId: c.fornecedorId,
+      contaFinanceiraId: c.contaFinanceiraId,
+      contaNome: c.contaFinanceiraId ? nomeConta.get(c.contaFinanceiraId) ?? "—" : "Sem conta",
+      status: c.status,
     });
   }
   if (contaId) {
@@ -297,6 +308,7 @@ export async function listarLancamentosFluxo(
       if (!noMes(t.data)) continue;
       if (t.contaDestinoId !== contaId && t.contaOrigemId !== contaId) continue;
       const entrada = t.contaDestinoId === contaId;
+      const contaLinha = entrada ? t.contaDestinoId : t.contaOrigemId;
       linhas.push({
         id: t.id,
         mes: t.data.slice(0, 7),
@@ -305,6 +317,9 @@ export async function listarLancamentosFluxo(
         valor: t.valor,
         tipo: entrada ? "entrada" : "saida",
         parceiroId: null,
+        contaFinanceiraId: contaLinha,
+        contaNome: nomeConta.get(contaLinha) ?? "—",
+        status: "aberta",
       });
     }
   }
@@ -438,6 +453,38 @@ export interface DREGrupoLinha {
   categorias: DRECategoriaLinha[];
 }
 
+export type DREWaterfallKind = "total" | "deducao" | "subtotal";
+
+/** Passo do gráfico waterfall (Receita → lucro líquido). */
+export interface DREWaterfallStep {
+  id: string;
+  rotulo: string;
+  /** Valor assinado exibido no rótulo (deduções negativas). */
+  valor: number;
+  /** Base invisível no stacked bar. */
+  base: number;
+  /** Altura da barra visível (sempre ≥ 0). */
+  altura: number;
+  kind: DREWaterfallKind;
+}
+
+export interface DREDetalheLinha {
+  chave: string;
+  rotulo: string;
+  /** 0 = grupo/total; 1 = categoria filha. */
+  nivel: 0 | 1;
+  /** Destaque de subtotal (lucro bruto, resultado, lucro líquido). */
+  destaque?: boolean;
+  valor: number;
+  valorAnterior: number;
+  pctReceita: number;
+  varAbs: number;
+  /** null quando o ano anterior é zero. */
+  varPct: number | null;
+  /** Série mensal no período (para sparkline). */
+  mensal: number[];
+}
+
 export interface DREData {
   inicio: string;
   fim: string;
@@ -447,6 +494,10 @@ export interface DREData {
   totalDespesas: number;
   resultado: number;
   margem: number; // resultado / receitas (%)
+  anoLabel: string;
+  anoAnteriorLabel: string;
+  waterfall: DREWaterfallStep[];
+  detalhe: DREDetalheLinha[];
 }
 
 function buildDREHierarquia(
@@ -506,32 +557,401 @@ function buildDREHierarquia(
     });
 }
 
+function shiftIsoYear(iso: string, delta: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${y + delta}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** Classifica despesa pelo nome do grupo/categoria (sem schema novo). */
+function classeDespesa(grupo: string, categoria: string): "cmv" | "imposto" | "opex" {
+  const t = `${grupo} ${categoria}`.toLowerCase();
+  if (/cmv|custo das? vendas|custo de merc|cogs|mercadoria revend/.test(t)) return "cmv";
+  if (/imposto|tribut|juro|encargo|inss|iss\b|icms|pis|cofins|irpj|csll|iof|taxa banc/.test(t)) {
+    return "imposto";
+  }
+  return "opex";
+}
+
+function mesesCompetencia(inicio: string, fim: string): string[] {
+  const out: string[] = [];
+  const [yi, mi] = inicio.split("-").map(Number);
+  const [yf, mf] = fim.split("-").map(Number);
+  let y = yi;
+  let m = mi;
+  while (y < yf || (y === yf && m <= mf)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+    if (out.length > 36) break;
+  }
+  return out;
+}
+
+function serieMensal(
+  itens: { valor: number; mes: string }[],
+  meses: string[]
+): number[] {
+  const map = new Map<string, number>();
+  for (const it of itens) map.set(it.mes, (map.get(it.mes) ?? 0) + it.valor);
+  return meses.map((m) => map.get(m) ?? 0);
+}
+
+function linhaDetalhe(
+  chave: string,
+  rotulo: string,
+  nivel: 0 | 1,
+  valor: number,
+  valorAnterior: number,
+  totalReceitas: number,
+  mensal: number[],
+  destaque?: boolean
+): DREDetalheLinha {
+  const varAbs = valor - valorAnterior;
+  const varPct = valorAnterior !== 0 ? (varAbs / Math.abs(valorAnterior)) * 100 : null;
+  return {
+    chave,
+    rotulo,
+    nivel,
+    destaque,
+    valor,
+    valorAnterior,
+    pctReceita: totalReceitas > 0 ? (valor / totalReceitas) * 100 : 0,
+    varAbs,
+    varPct,
+    mensal,
+  };
+}
+
+function buildWaterfall(receita: number, cmv: number, opex: number, imposto: number): DREWaterfallStep[] {
+  const lucroBruto = receita - cmv;
+  const resultadoOp = lucroBruto - opex;
+  const lucroLiq = resultadoOp - imposto;
+  const steps: DREWaterfallStep[] = [];
+  let running = 0;
+
+  const pushTotal = (id: string, rotulo: string, valor: number, kind: DREWaterfallKind) => {
+    steps.push({ id, rotulo, valor, base: 0, altura: Math.abs(valor), kind });
+    running = valor;
+  };
+  const pushDed = (id: string, rotulo: string, valorAbs: number) => {
+    const next = running - valorAbs;
+    steps.push({
+      id,
+      rotulo,
+      valor: -valorAbs,
+      base: Math.min(running, next),
+      altura: Math.abs(valorAbs),
+      kind: "deducao",
+    });
+    running = next;
+  };
+
+  pushTotal("receita", "Receita", receita, "total");
+  pushDed("cmv", "Custos (CMV)", cmv);
+  pushTotal("lucro-bruto", "Lucro bruto", lucroBruto, "subtotal");
+  pushDed("opex", "Despesas operacionais", opex);
+  pushTotal("resultado-op", "Resultado operacional", resultadoOp, "subtotal");
+  pushDed("imposto", "Impostos e juros", imposto);
+  pushTotal("lucro-liq", "Lucro líquido", lucroLiq, "total");
+  return steps;
+}
+
 export async function getDRE(empresaId: string, inicio: string, fim: string): Promise<DREData> {
-  const inRange = (iso: string) => iso >= inicio && iso <= fim;
+  const inRange = (iso: string, a: string, b: string) => iso >= a && iso <= b;
+  const prevInicio = shiftIsoYear(inicio, -1);
+  const prevFim = shiftIsoYear(fim, -1);
+  const meses = mesesCompetencia(inicio, fim);
+
   const [pagarAll, receberAll, categorias, grupos] = await Promise.all([
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
     categoriaService.list(empresaId),
     categoriaGrupoService.list(empresaId),
   ]);
-  const pagar = pagarAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
-  const receber = receberAll.filter((c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia));
+
+  const catMap = new Map(categorias.map((c) => [c.id, c]));
+  const grupoMap = new Map(grupos.map((g) => [g.id, g]));
+
+  const pagarPeriodo = pagarAll.filter(
+    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, inicio, fim)
+  );
+  const receberPeriodo = receberAll.filter(
+    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, inicio, fim)
+  );
+  const pagarAnt = pagarAll.filter(
+    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, prevInicio, prevFim)
+  );
+  const receberAnt = receberAll.filter(
+    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, prevInicio, prevFim)
+  );
+
+  const gruposReceita = grupos.filter((g) => g.tipo === "receita");
+  const gruposDespesa = grupos.filter((g) => g.tipo === "despesa");
 
   const receitas = buildDREHierarquia(
-    receber.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    receberPeriodo.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
     categorias,
-    grupos.filter((g) => g.tipo === "receita")
+    gruposReceita
   );
   const despesas = buildDREHierarquia(
-    pagar.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    pagarPeriodo.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
     categorias,
-    grupos.filter((g) => g.tipo === "despesa")
+    gruposDespesa
+  );
+  const receitasAnt = buildDREHierarquia(
+    receberAnt.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    categorias,
+    gruposReceita
+  );
+  const despesasAnt = buildDREHierarquia(
+    pagarAnt.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
+    categorias,
+    gruposDespesa
   );
 
   const totalReceitas = receitas.reduce((s, r) => s + r.total, 0);
   const totalDespesas = despesas.reduce((s, r) => s + r.total, 0);
+  const totalReceitasAnt = receitasAnt.reduce((s, r) => s + r.total, 0);
   const resultado = totalReceitas - totalDespesas;
   const margem = totalReceitas > 0 ? (resultado / totalReceitas) * 100 : 0;
 
-  return { inicio, fim, receitas, despesas, totalReceitas, totalDespesas, resultado, margem };
+  let cmv = 0;
+  let opex = 0;
+  let imposto = 0;
+  let cmvAnt = 0;
+  let opexAnt = 0;
+  let impostoAnt = 0;
+
+  const acumularDespesa = (
+    lista: typeof pagarPeriodo,
+    add: (classe: "cmv" | "imposto" | "opex", valor: number) => void
+  ) => {
+    for (const c of lista) {
+      const cat = c.categoriaId ? catMap.get(c.categoriaId) : undefined;
+      const grupo = cat?.grupoId ? grupoMap.get(cat.grupoId) : undefined;
+      const classe = classeDespesa(grupo?.nome ?? "", cat?.nome ?? "");
+      add(classe, c.valor);
+    }
+  };
+  acumularDespesa(pagarPeriodo, (classe, v) => {
+    if (classe === "cmv") cmv += v;
+    else if (classe === "imposto") imposto += v;
+    else opex += v;
+  });
+  acumularDespesa(pagarAnt, (classe, v) => {
+    if (classe === "cmv") cmvAnt += v;
+    else if (classe === "imposto") impostoAnt += v;
+    else opexAnt += v;
+  });
+
+  const waterfall = buildWaterfall(totalReceitas, cmv, opex, imposto);
+
+  const antCat = (lista: DREGrupoLinha[], gChave: string, cChave: string) =>
+    lista.find((g) => g.chave === gChave)?.categorias.find((c) => c.chave === cChave)?.total ?? 0;
+
+  const receberMensal = receberPeriodo.map((c) => ({
+    valor: c.valor,
+    mes: c.dataCompetencia.slice(0, 7),
+    categoriaId: c.categoriaId,
+    grupoId: c.categoriaId ? catMap.get(c.categoriaId)?.grupoId ?? null : null,
+  }));
+  const pagarMensal = pagarPeriodo.map((c) => {
+    const cat = c.categoriaId ? catMap.get(c.categoriaId) : undefined;
+    return {
+      valor: c.valor,
+      mes: c.dataCompetencia.slice(0, 7),
+      categoriaId: c.categoriaId,
+      grupoId: cat?.grupoId ?? null,
+      classe: classeDespesa(
+        cat?.grupoId ? grupoMap.get(cat.grupoId)?.nome ?? "" : "",
+        cat?.nome ?? ""
+      ),
+    };
+  });
+
+  const detalhe: DREDetalheLinha[] = [];
+
+  detalhe.push(
+    linhaDetalhe(
+      "receita-op",
+      "Receita operacional",
+      0,
+      totalReceitas,
+      totalReceitasAnt,
+      totalReceitas,
+      serieMensal(
+        receberMensal.map((x) => ({ valor: x.valor, mes: x.mes })),
+        meses
+      )
+    )
+  );
+  for (const g of receitas) {
+    for (const c of g.categorias) {
+      detalhe.push(
+        linhaDetalhe(
+          `rec-${g.chave}-${c.chave}`,
+          c.rotulo,
+          1,
+          c.total,
+          antCat(receitasAnt, g.chave, c.chave),
+          totalReceitas,
+          serieMensal(
+            receberMensal
+              .filter((x) => (x.categoriaId ?? "sem") === c.chave)
+              .map((x) => ({ valor: x.valor, mes: x.mes })),
+            meses
+          )
+        )
+      );
+    }
+  }
+
+  detalhe.push(
+    linhaDetalhe(
+      "cmv",
+      "Custo das vendas (CMV)",
+      0,
+      cmv,
+      cmvAnt,
+      totalReceitas,
+      serieMensal(
+        pagarMensal.filter((x) => x.classe === "cmv").map((x) => ({ valor: x.valor, mes: x.mes })),
+        meses
+      )
+    )
+  );
+
+  const lucroBruto = totalReceitas - cmv;
+  const lucroBrutoAnt = totalReceitasAnt - cmvAnt;
+  detalhe.push(
+    linhaDetalhe(
+      "lucro-bruto",
+      "Lucro bruto",
+      0,
+      lucroBruto,
+      lucroBrutoAnt,
+      totalReceitas,
+      meses.map((_, i) => {
+        const rec = receberMensal.filter((x) => x.mes === meses[i]).reduce((s, x) => s + x.valor, 0);
+        const c = pagarMensal
+          .filter((x) => x.mes === meses[i] && x.classe === "cmv")
+          .reduce((s, x) => s + x.valor, 0);
+        return rec - c;
+      }),
+      true
+    )
+  );
+
+  detalhe.push(
+    linhaDetalhe(
+      "opex",
+      "Despesas operacionais",
+      0,
+      opex,
+      opexAnt,
+      totalReceitas,
+      serieMensal(
+        pagarMensal.filter((x) => x.classe === "opex").map((x) => ({ valor: x.valor, mes: x.mes })),
+        meses
+      )
+    )
+  );
+  for (const g of despesas) {
+    const catsOpex = g.categorias.filter((c) => classeDespesa(g.rotulo, c.rotulo) === "opex");
+    for (const c of catsOpex) {
+      detalhe.push(
+        linhaDetalhe(
+          `opex-${g.chave}-${c.chave}`,
+          c.rotulo,
+          1,
+          c.total,
+          antCat(despesasAnt, g.chave, c.chave),
+          totalReceitas,
+          serieMensal(
+            pagarMensal
+              .filter((x) => x.classe === "opex" && (x.categoriaId ?? "sem") === c.chave)
+              .map((x) => ({ valor: x.valor, mes: x.mes })),
+            meses
+          )
+        )
+      );
+    }
+  }
+
+  const resultadoOp = lucroBruto - opex;
+  const resultadoOpAnt = lucroBrutoAnt - opexAnt;
+  detalhe.push(
+    linhaDetalhe(
+      "resultado-op",
+      "Resultado operacional",
+      0,
+      resultadoOp,
+      resultadoOpAnt,
+      totalReceitas,
+      meses.map((_, i) => {
+        const rec = receberMensal.filter((x) => x.mes === meses[i]).reduce((s, x) => s + x.valor, 0);
+        const cm = pagarMensal
+          .filter((x) => x.mes === meses[i] && x.classe === "cmv")
+          .reduce((s, x) => s + x.valor, 0);
+        const op = pagarMensal
+          .filter((x) => x.mes === meses[i] && x.classe === "opex")
+          .reduce((s, x) => s + x.valor, 0);
+        return rec - cm - op;
+      }),
+      true
+    )
+  );
+
+  detalhe.push(
+    linhaDetalhe(
+      "imposto",
+      "Impostos e juros",
+      0,
+      imposto,
+      impostoAnt,
+      totalReceitas,
+      serieMensal(
+        pagarMensal.filter((x) => x.classe === "imposto").map((x) => ({ valor: x.valor, mes: x.mes })),
+        meses
+      )
+    )
+  );
+
+  detalhe.push(
+    linhaDetalhe(
+      "lucro-liq",
+      "Lucro líquido",
+      0,
+      resultado,
+      totalReceitasAnt - (cmvAnt + opexAnt + impostoAnt),
+      totalReceitas,
+      meses.map((_, i) => {
+        const rec = receberMensal.filter((x) => x.mes === meses[i]).reduce((s, x) => s + x.valor, 0);
+        const des = pagarMensal.filter((x) => x.mes === meses[i]).reduce((s, x) => s + x.valor, 0);
+        return rec - des;
+      }),
+      true
+    )
+  );
+
+  const anoLabel = fim.slice(0, 4);
+  const anoAnteriorLabel = String(Number(anoLabel) - 1);
+
+  return {
+    inicio,
+    fim,
+    receitas,
+    despesas,
+    totalReceitas,
+    totalDespesas,
+    resultado,
+    margem,
+    anoLabel,
+    anoAnteriorLabel,
+    waterfall,
+    detalhe,
+  };
 }

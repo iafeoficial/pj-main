@@ -110,7 +110,7 @@ export function monthRange(ref = new Date()): { start: string; end: string } {
 /** Rótulos legíveis de status. */
 export const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
-  aberta: "Aberta",
+  aberta: "Em aberto",
   parcial: "Parcial",
   paga: "Paga",
   recebida: "Recebida",

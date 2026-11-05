@@ -182,34 +182,34 @@ function SidebarNav({
   }
 
   return (
-    <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
+    <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
       {sections.map((section) => {
         const open = isOpen(section.title, section.items);
         const active = sectionHasActive(section.items, pathname);
         return (
-          <div key={section.title} className="pb-1">
+          <div key={section.title}>
             <button
               type="button"
               onClick={() => toggle(section.title, section.items)}
               aria-expanded={open}
               className={cn(
-                "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide transition-colors",
+                "flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-[11px] font-medium uppercase tracking-wider transition-colors",
                 active
-                  ? "text-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  ? "text-muted-foreground"
+                  : "text-muted-foreground/80 hover:text-muted-foreground"
               )}
             >
               <span>{section.title}</span>
               <ChevronDown
                 className={cn(
-                  "h-3.5 w-3.5 shrink-0 transition-transform",
+                  "h-3.5 w-3.5 shrink-0 opacity-60 transition-transform",
                   open ? "rotate-0" : "-rotate-90"
                 )}
                 aria-hidden
               />
             </button>
             {open && (
-              <div className="mt-0.5 space-y-0.5">
+              <div className="mt-1 space-y-0.5">
                 {section.items.map((item) => (
                   <NavLink
                     key={item.to}
@@ -218,15 +218,27 @@ function SidebarNav({
                     onClick={onNavigate}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors",
+                        "flex items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm transition-colors",
                         isActive
-                          ? "bg-primary text-primary-foreground"
-                          : "text-foreground hover:bg-accent hover:text-accent-foreground"
+                          ? "border-[#C5DDD0] bg-[#E8F3EC] font-semibold text-primary"
+                          : "border-transparent font-normal text-[#8A9690] hover:bg-[#E8F3EC]/60 hover:text-primary"
                       )
                     }
                   >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          className={cn(
+                            "h-[18px] w-[18px] shrink-0",
+                            isActive
+                              ? "stroke-[2] text-primary"
+                              : "stroke-[1.5] text-[#8A9690]"
+                          )}
+                          aria-hidden
+                        />
+                        <span>{item.label}</span>
+                      </>
+                    )}
                   </NavLink>
                 ))}
               </div>
@@ -265,15 +277,19 @@ export function AppShell() {
   const readOnly = papel != null && !canWrite(papel);
 
   const userFooter = (
-    <div className="border-t border-border px-3 py-3">
+    <div className="border-t border-border/70 px-4 py-3.5">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-xs font-medium" title={user?.email ?? ""}>
+          <p className="truncate text-xs font-medium text-foreground" title={user?.email ?? ""}>
             {user?.email ?? "—"}
           </p>
           <p className="text-[11px] text-muted-foreground">{papel ? PAPEL_LABEL[papel] : "—"}</p>
         </div>
-        <button className="btn-ghost btn-sm shrink-0" onClick={() => signOut()} title="Sair">
+        <button
+          className="btn-ghost btn-sm shrink-0 text-muted-foreground"
+          onClick={() => signOut()}
+          title="Sair"
+        >
           <LogOut className="h-4 w-4" />
         </button>
       </div>
@@ -284,16 +300,17 @@ export function AppShell() {
     <div className="flex min-h-screen bg-background">
       {/* Desktop sidebar */}
       {sidebarOpen && (
-        <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-card md:flex">
-          <div className="flex items-center gap-2 px-4 py-4">
-            <img src="/logo-iafe.png" alt="IAFE" className="h-9 w-9 object-contain" />
+        <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border/80 bg-white md:flex">
+          <div className="flex items-center gap-3 px-4 py-5">
+            <img src="/logo-iafe.png" alt="IAFÉ" className="h-10 w-10 object-contain" />
             <div className="min-w-0 flex-1 leading-tight">
-              <p className="text-sm font-semibold">Finanças PJ</p>
-              <p className="text-xs text-muted-foreground">Gestão financeira</p>
+              <p className="font-display text-base font-semibold tracking-tight text-primary">
+                IAFÉ PJ
+              </p>
             </div>
             <button
               type="button"
-              className="btn-ghost btn-sm shrink-0"
+              className="btn-ghost btn-sm shrink-0 text-muted-foreground"
               title="Esconder menu"
               aria-label="Esconder menu"
               onClick={() => setSidebarOpen(false)}
@@ -314,10 +331,15 @@ export function AppShell() {
             aria-label="Fechar menu"
             onClick={() => setDrawerOpen(false)}
           />
-          <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-card shadow-xl">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <span className="text-sm font-semibold">Finanças PJ</span>
-              <button className="btn-ghost btn-sm" onClick={() => setDrawerOpen(false)}>
+          <aside className="relative flex h-full w-72 max-w-[85vw] flex-col bg-white shadow-xl">
+            <div className="flex items-center justify-between px-4 py-4">
+              <div className="flex items-center gap-3">
+                <img src="/logo-iafe.png" alt="IAFÉ" className="h-9 w-9 object-contain" />
+                <span className="font-display text-base font-semibold tracking-tight text-primary">
+                  IAFÉ PJ
+                </span>
+              </div>
+              <button className="btn-ghost btn-sm text-muted-foreground" onClick={() => setDrawerOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -348,9 +370,9 @@ export function AppShell() {
                 <PanelLeft className="h-5 w-5" />
               </button>
             )}
-            <span className="text-sm font-semibold md:hidden">Finanças PJ</span>
+            <span className="font-display text-sm font-semibold tracking-tight md:hidden">IAFÉ PJ</span>
             {!sidebarOpen && (
-              <span className="hidden text-sm font-semibold md:inline">Finanças PJ</span>
+              <span className="hidden font-display text-sm font-semibold tracking-tight md:inline">IAFÉ PJ</span>
             )}
           </div>
           <div className="ml-auto">

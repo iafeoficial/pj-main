@@ -325,6 +325,15 @@ o magic link autenticava e a pessoa via só a empresa antiga.
 **Implementação:** `supabase/functions/enviar-convite`; migrations `0032`/`0033`;
 `conviteService` + `EmpresaContext.refreshEmpresas`.
 
+## ADR-032 — DRE visual (waterfall + detalhe YoY)
+**Decisão:** a tela DRE segue o layout do manual (waterfall Receita→Lucro líquido e tabela com
+% da receita, variação vs. período equivalente do ano anterior e sparkline mensal). Os filtros
+Início/Fim permanecem. CMV / despesas operacionais / impostos são classificados pelo **nome**
+do grupo/categoria (heurística), sem coluna nova no schema — o restante das despesas cai em opex.
+**Motivo:** espelhar a identidade visual sem inventar números; o cálculo continua em cima de
+contas a pagar/receber por competência.
+**Implementação:** `getDRE` em `analytics.ts`; `DREPage.tsx`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.
