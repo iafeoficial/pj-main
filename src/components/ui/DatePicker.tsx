@@ -101,10 +101,18 @@ export function DatePicker({
     [onChange]
   );
 
+  function clear() {
+    setText("");
+    setOpen(false);
+    if (value) onChange("");
+  }
+
   function commit(raw: string) {
     const masked = maskData(raw);
     if (!masked) {
-      setText(display);
+      // Campo vazio = limpar (ex.: fim do período = sem prazo)
+      setText("");
+      if (value) onChange("");
       return;
     }
     const parsed = parseBr(masked);
@@ -244,14 +252,22 @@ export function DatePicker({
             })}
           </div>
 
-          <div className="mt-2 border-t border-border pt-2">
+          <div className="mt-2 flex gap-1 border-t border-border pt-2">
             <button
               type="button"
-              className="btn-ghost btn-sm h-7 w-full text-xs"
+              className="btn-ghost btn-sm h-7 flex-1 text-xs"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => selectDate(new Date())}
             >
               Hoje
+            </button>
+            <button
+              type="button"
+              className="btn-ghost btn-sm h-7 flex-1 text-xs"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={clear}
+            >
+              Limpar
             </button>
           </div>
         </div>

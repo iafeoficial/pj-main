@@ -33,6 +33,7 @@ export function AdminPlataformaPage() {
   const [aba, setAba] = useState<Aba>("empresas");
   const [version, setVersion] = useState(0);
   const [editEmpresa, setEditEmpresa] = useState<Empresa | null>(null);
+  const [unlockEmpresa, setUnlockEmpresa] = useState<Empresa | null>(null);
   const [editUser, setEditUser] = useState<UserProfile | null>(null);
 
   const allowed = isPlataformaAdminEmail(user?.email);
@@ -124,7 +125,7 @@ export function AdminPlataformaPage() {
                   <th className="px-4 py-3">CNPJ</th>
                   <th className="px-4 py-3">Período</th>
                   <th className="px-4 py-3">Acesso</th>
-                  <th className="px-4 py-3 text-right">Ações</th>
+                  <th className="px-4 py-3 text-right min-w-[13.5rem]">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -136,13 +137,13 @@ export function AdminPlataformaPage() {
                         <div className="font-medium">{e.nomeFantasia}</div>
                         <div className="text-xs text-muted-foreground">{e.razaoSocial}</div>
                       </td>
-                      <td className="px-4 py-3 tabular-nums">{formatCNPJ(e.cnpj)}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                      <td className="px-4 py-3 tabular-nums whitespace-nowrap">{formatCNPJ(e.cnpj)}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                         {e.acessoInicio ? formatDate(e.acessoInicio.slice(0, 10)) : "—"}
                         {" → "}
                         {e.acessoFim ? formatDate(e.acessoFim.slice(0, 10)) : "sem prazo"}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         {ok ? (
                           <span className="badge bg-[#E8F4EE] text-success">Liberado</span>
                         ) : e.acessoBloqueado ? (
@@ -151,10 +152,21 @@ export function AdminPlataformaPage() {
                           <span className="badge bg-amber-100 text-amber-800">Período encerrado</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button type="button" className="btn-outline btn-sm" onClick={() => setEditEmpresa(e)}>
-                          Período / bloqueio
-                        </button>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                          {!ok && (
+                            <button
+                              type="button"
+                              className="btn-primary btn-sm"
+                              onClick={() => setUnlockEmpresa(e)}
+                            >
+                              Desbloquear
+                            </button>
+                          )}
+                          <button type="button" className="btn-outline btn-sm" onClick={() => setEditEmpresa(e)}>
+                            Período / bloqueio
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -235,6 +247,19 @@ export function AdminPlataformaPage() {
         />
       )}
 
+      {unlockEmpresa && (
+        <EmpresaDesbloquearModal
+          empresa={unlockEmpresa}
+          onClose={() => setUnlockEmpresa(null)}
+          onSaved={() => {
+            setUnlockEmpresa(null);
+            setVersion((v) => v + 1);
+            notify("Empresa desbloqueada.");
+          }}
+          onError={(m) => notify(m, "error")}
+        />
+      )}
+
       {editUser && (
         <UsuarioBloqueioModal
           profile={editUser}
@@ -305,7 +330,7 @@ function EmpresaAcessoModal({
         <Field label="Início do período">
           <DatePicker value={inicio} onChange={setInicio} placeholder="dd/mm/aaaa" />
         </Field>
-        <Field label="Fim do período" hint="Vazio = sem prazo">
+        <Field label="Fim do período" hint="Vazio ou Limpar = sem prazo">
           <DatePicker value={fim} onChange={setFim} placeholder="dd/mm/aaaa" />
         </Field>
         <div className="sm:col-span-2">
@@ -328,6 +353,106 @@ function EmpresaAcessoModal({
           />
         </Field>
       </div>
+    </Modal>
+  );
+}
+
+function EmpresaDesbloquearModal({
+  empresa,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  empresa: Empresa;
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (m: string) => void;
+}) {
+  const [modo, setModo] = useState<"sem_prazo" | "novo_prazo">("sem_prazo");
+  const [fim, setFim] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (modo === "novo_prazo" && !fim) {
+      onError("Informe a nova data de fim do período, ou escolha sem prazo.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const hoje = new Date();
+      const inicioIso = new Date(
+        `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-${String(hoje.getDate()).padStart(2, "0")}T00:00:00`
+      ).toISOString();
+      await plataformaService.updateEmpresaAcesso(empresa.id, {
+        acessoInicio: inicioIso,
+        acessoFim: modo === "sem_prazo" ? null : fromDateInput(fim),
+        acessoBloqueado: false,
+        acessoMotivo: null,
+      });
+      onSaved();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      title={`Desbloquear — ${empresa.nomeFantasia}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-outline" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="button" className="btn-primary" disabled={saving} onClick={() => void save()}>
+            {saving ? "Salvando…" : "Desbloquear"}
+          </button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-muted-foreground">
+        Como liberar o acesso desta empresa?
+      </p>
+      <div className="space-y-2">
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-secondary/60">
+          <input
+            type="radio"
+            name="unlock-modo"
+            className="mt-0.5"
+            checked={modo === "sem_prazo"}
+            onChange={() => setModo("sem_prazo")}
+          />
+          <span>
+            <span className="font-medium">Sem prazo</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Acesso liberado sem data de fim. Pode definir um prazo depois em Período / bloqueio.
+            </span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-border p-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-secondary/60">
+          <input
+            type="radio"
+            name="unlock-modo"
+            className="mt-0.5"
+            checked={modo === "novo_prazo"}
+            onChange={() => setModo("novo_prazo")}
+          />
+          <span>
+            <span className="font-medium">Com novo prazo</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Define uma nova data de fim. O início passa a ser hoje.
+            </span>
+          </span>
+        </label>
+      </div>
+      {modo === "novo_prazo" && (
+        <Field label="Novo fim do período" className="mt-3">
+          <DatePicker value={fim} onChange={setFim} placeholder="dd/mm/aaaa" />
+        </Field>
+      )}
     </Modal>
   );
 }
