@@ -13,7 +13,7 @@ import {
 import {
   getFluxoCaixaPeriodo,
   getPeriodoPadrao,
-  getSaldosContas,
+  getSaldosContasAte,
   listarLancamentosFluxo,
   type FluxoBucket,
   type LancamentoFluxo,
@@ -170,8 +170,8 @@ function Inner({ empresaId }: { empresaId: string }) {
     []
   );
   const { data: saldos } = useAsyncData(
-    () => getSaldosContas(empresaId),
-    [empresaId, version],
+    () => (fim ? getSaldosContasAte(empresaId, fim) : Promise.resolve({ contas: [] as SaldoContaLinha[], total: 0 })),
+    [empresaId, fim, version],
     { contas: [] as SaldoContaLinha[], total: 0 }
   );
 
@@ -247,7 +247,7 @@ function Inner({ empresaId }: { empresaId: string }) {
     <>
       <PageHeader
         title="Fluxo de Caixa"
-        subtitle="Entradas e saídas por vencimento no período. O saldo da conta é o acumulado até agora."
+        subtitle="Entradas e saídas por vencimento no período. Os balões de saldo usam a data fim do filtro."
       />
 
       {/* Filtros — última escolha do usuário (por empresa) fica no localStorage */}
@@ -280,7 +280,10 @@ function Inner({ empresaId }: { empresaId: string }) {
         </div>
       </div>
 
-      {/* 4 balões: Saldo total (verde profundo) + contas */}
+      {/* Balões: saldo na data fim do filtro (só nesta tela) */}
+      <p className="mb-2 text-xs text-muted-foreground">
+        Saldos em {fim ? formatDate(fim) : "—"}.
+      </p>
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <button
           type="button"

@@ -346,6 +346,13 @@ o onboarding.
 **Implementação:** migration `0034_acesso_periodo_bloqueio.sql`; `plataforma.ts`;
 `OnboardingGuide`; `AdminPlataformaPage`; `lib/acesso.ts`.
 
+## ADR-034 — Saldos do Fluxo na data fim
+**Decisão:** no Fluxo de Caixa, os balões (Saldo total + contas) usam `getSaldosContasAte(fim)`:
+abertura + baixas/recebimentos/transferências com data ≤ fim do filtro. Dashboard e demais
+telas continuam com `getSaldosContas` (saldo atual).
+**Motivo:** o usuário espera que o filtro Início/Fim altere os balões só nessa tela.
+**Implementação:** `getSaldosContasAte` em `analytics.ts`; `FluxoCaixaPage.tsx`.
+
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
 chamam `bumpData()` para incrementá-lo.

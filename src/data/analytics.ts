@@ -3,6 +3,7 @@ import type { ContaPagar, ContaReceber } from "@/types/domain";
 import { labelContaFinanceira } from "@/lib/contaFinanceira";
 import { monthRange, roundBRL } from "@/lib/utils";
 import { transferenciaService } from "./transferencias";
+import { pagamentoContaTable } from "./repos";
 import {
   categoriaGrupoService,
   categoriaService,
@@ -332,7 +333,7 @@ export interface SaldoContaLinha {
   saldo: number;
 }
 
-/** Saldo acumulado de cada conta: abertura + o que já entrou − o que já saiu. */
+/** Saldo acumulado de cada conta: abertura + o que já entrou − o que já saiu (até hoje). */
 export async function getSaldosContas(
   empresaId: string
 ): Promise<{ contas: SaldoContaLinha[]; total: number }> {
@@ -360,6 +361,70 @@ export async function getSaldosContas(
     add(t.contaDestinoId, t.valor);
     add(t.contaOrigemId, -t.valor);
   }
+  const linhas = contas
+    .map((c) => ({
+      id: c.id,
+      nome: labelContaFinanceira(c),
+      saldo: roundBRL(map.get(c.id) ?? 0),
+    }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  return { contas: linhas, total: roundBRL(linhas.reduce((s, l) => s + l.saldo, 0)) };
+}
+
+/**
+ * Saldo de cada conta **na data fim** (inclusive).
+ * Usado só no Fluxo de Caixa; Dashboard e demais telas continuam com `getSaldosContas`.
+ */
+export async function getSaldosContasAte(
+  empresaId: string,
+  ate: string
+): Promise<{ contas: SaldoContaLinha[]; total: number }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ate)) return getSaldosContas(empresaId);
+
+  const [contas, pagarAll, receberAll, transferencias, pagamentos] = await Promise.all([
+    contaFinanceiraService.list(empresaId),
+    contaPagarService.list(empresaId),
+    contaReceberService.list(empresaId),
+    transferenciaService.list(empresaId),
+    pagamentoContaTable.list(empresaId),
+  ]);
+
+  const map = new Map<string, number>();
+  for (const c of contas) map.set(c.id, Number(c.saldoInicial) || 0);
+  const add = (id: string | null, valor: number) => {
+    if (!id || !map.has(id)) return;
+    map.set(id, (map.get(id) ?? 0) + valor);
+  };
+
+  const pagarComHistorico = new Set(pagamentos.map((p) => p.contaPagarId));
+  const pagoAte = new Map<string, number>();
+  for (const p of pagamentos) {
+    if (p.data > ate) continue;
+    pagoAte.set(p.contaPagarId, (pagoAte.get(p.contaPagarId) ?? 0) + p.valor);
+  }
+
+  for (const c of pagarAll) {
+    if (!isAtiva(c.status)) continue;
+    if (pagarComHistorico.has(c.id)) {
+      add(c.contaFinanceiraId, -(pagoAte.get(c.id) ?? 0));
+    } else if ((c.valorPago ?? 0) > 0 && c.dataPagamento && c.dataPagamento <= ate) {
+      add(c.contaFinanceiraId, -c.valorPago);
+    }
+  }
+
+  for (const c of receberAll) {
+    if (!isAtiva(c.status)) continue;
+    if ((c.valorRecebido ?? 0) > 0 && c.dataRecebimento && c.dataRecebimento <= ate) {
+      add(c.contaFinanceiraId, c.valorRecebido);
+    }
+  }
+
+  for (const t of transferencias) {
+    if (t.data > ate) continue;
+    add(t.contaDestinoId, t.valor);
+    add(t.contaOrigemId, -t.valor);
+  }
+
   const linhas = contas
     .map((c) => ({
       id: c.id,
