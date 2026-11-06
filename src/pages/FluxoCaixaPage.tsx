@@ -23,6 +23,7 @@ import { clienteService, fornecedorService } from "@/data/cadastros";
 import { combinaBusca, partesData, partesValor } from "@/lib/busca";
 import { useEmpresa } from "@/context/EmpresaContext";
 import { useAsyncData } from "@/hooks/useAsyncData";
+import { usePersistedState } from "@/hooks/usePersistedState";
 import { CHART } from "@/lib/chartTheme";
 import { cn, formatBRL, formatDate, monthRange, STATUS_LABEL } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -33,6 +34,32 @@ import { Select } from "@/components/ui/Select";
 import { RequireEmpresa } from "@/components/RequireEmpresa";
 import { ContasPagarPainel } from "@/pages/ContasPagarPage";
 import { ContasReceberPainel } from "@/pages/ContasReceberPage";
+
+type FluxoFiltros = {
+  inicio: string;
+  fim: string;
+  contaId: string;
+  busca: string;
+  /** true = usuário escolheu o período; não sobrescrever com o padrão da empresa */
+  manual: boolean;
+};
+
+function filtrosFluxoPadrao(): FluxoFiltros {
+  const m = monthRange();
+  return { inicio: m.start, fim: m.end, contaId: "", busca: "", manual: false };
+}
+
+function normalizarFiltrosFluxo(raw: FluxoFiltros): FluxoFiltros {
+  const iso = (s: unknown) => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "");
+  const padrao = filtrosFluxoPadrao();
+  return {
+    inicio: iso(raw.inicio) || padrao.inicio,
+    fim: iso(raw.fim) || padrao.fim,
+    contaId: typeof raw.contaId === "string" ? raw.contaId : "",
+    busca: typeof raw.busca === "string" ? raw.busca : "",
+    manual: !!raw.manual,
+  };
+}
 
 const TERRACOTA = "#C9A59A";
 
@@ -96,30 +123,28 @@ function Sparkline({ values, stroke, fill }: { values: number[]; stroke: string;
 
 function Inner({ empresaId }: { empresaId: string }) {
   const { version } = useEmpresa();
-  const fallback = monthRange();
   const { data: periodo } = useAsyncData(
     () => getPeriodoPadrao(empresaId, "vencimento"),
     [empresaId, version],
     null as { inicio: string; fim: string } | null
   );
-  const [inicio, setInicio] = useState(fallback.start);
-  const [fim, setFim] = useState(fallback.end);
-  const [manual, setManual] = useState(false);
-  const [contaId, setContaId] = useState("");
-  const [busca, setBusca] = useState("");
+  const [filtrosRaw, setFiltros] = usePersistedState<FluxoFiltros>(
+    `financas_pj:filtros:fluxo:${empresaId}`,
+    filtrosFluxoPadrao()
+  );
+  const filtros = normalizarFiltrosFluxo(filtrosRaw);
+  const { inicio, fim, contaId, busca, manual } = filtros;
   const [extratoAberto, setExtratoAberto] = useState(false);
 
   useEffect(() => {
-    setManual(false);
-    setContaId("");
-  }, [empresaId]);
-
-  useEffect(() => {
-    if (periodo && !manual) {
-      setInicio(periodo.inicio);
-      setFim(periodo.fim);
-    }
-  }, [periodo, manual]);
+    if (!periodo || manual) return;
+    if (periodo.inicio === inicio && periodo.fim === fim) return;
+    setFiltros((f) => {
+      const cur = normalizarFiltrosFluxo(f);
+      if (cur.manual) return cur;
+      return { ...cur, inicio: periodo.inicio, fim: periodo.fim, manual: false };
+    });
+  }, [periodo, manual, inicio, fim, setFiltros]);
 
   const { data: fluxo } = useAsyncData(
     () => (inicio && fim ? getFluxoCaixaPeriodo(empresaId, inicio, fim, contaId || null) : Promise.resolve([])),
@@ -225,31 +250,33 @@ function Inner({ empresaId }: { empresaId: string }) {
         subtitle="Entradas e saídas por vencimento no período. O saldo da conta é o acumulado até agora."
       />
 
-      {/* Filtros — permanecem onde estão */}
+      {/* Filtros — última escolha do usuário (por empresa) fica no localStorage */}
       <div className="card mb-6 flex flex-wrap items-end gap-4 p-4">
         <Field label="Início">
           <DatePicker
             value={inicio}
-            onChange={(v) => {
-              setManual(true);
-              setInicio(v);
-            }}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), inicio: v, manual: true }))}
           />
         </Field>
         <Field label="Fim">
           <DatePicker
             value={fim}
-            onChange={(v) => {
-              setManual(true);
-              setFim(v);
-            }}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), fim: v, manual: true }))}
           />
         </Field>
         <Field label="Conta" className="min-w-[16rem]">
-          <Select value={contaId} onChange={setContaId} options={opcoes} placeholder="Todas as contas" />
+          <Select
+            value={contaId}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), contaId: v }))}
+            options={opcoes}
+            placeholder="Todas as contas"
+          />
         </Field>
         <div className="min-w-[16rem] flex-1">
-          <BuscaCampo value={busca} onChange={setBusca} />
+          <BuscaCampo
+            value={busca}
+            onChange={(v) => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), busca: v }))}
+          />
         </div>
       </div>
 
@@ -257,7 +284,7 @@ function Inner({ empresaId }: { empresaId: string }) {
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <button
           type="button"
-          onClick={() => setContaId("")}
+          onClick={() => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), contaId: "" }))}
           className={cn(
             "rounded-lg bg-primary px-4 py-3.5 text-left text-primary-foreground shadow-sm transition-shadow",
             contaId === "" && "ring-2 ring-brand-highlight ring-offset-2"
@@ -273,7 +300,7 @@ function Inner({ empresaId }: { empresaId: string }) {
           <button
             key={c.id}
             type="button"
-            onClick={() => setContaId(c.id)}
+            onClick={() => setFiltros((f) => ({ ...normalizarFiltrosFluxo(f), contaId: c.id }))}
             className={cn(
               "kpi-balloon text-left transition-shadow hover:border-brand-symbol/40",
               contaId === c.id && "ring-2 ring-primary"
@@ -302,40 +329,48 @@ function Inner({ empresaId }: { empresaId: string }) {
             </span>
           </div>
         </div>
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
-              <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} />
-              <YAxis
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v: number) =>
-                  Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(Math.round(v))
-                }
-              />
-              <ReferenceLine y={0} stroke={CHART.grid} />
-              <Tooltip
-                formatter={(v: number, name: string) => [
-                  formatBRL(name === "Saídas" ? Math.abs(v) : v),
-                  name,
-                ]}
-                contentStyle={{ fontSize: 12, borderRadius: 8 }}
-              />
-              <Bar dataKey="entradas" name="Entradas" fill={CHART.entradas} radius={[4, 4, 0, 0]} legendType="none" />
-              <Bar dataKey="saidasNeg" name="Saídas" fill={TERRACOTA} radius={[0, 0, 4, 4]} legendType="none" />
-              <Line
-                type="monotone"
-                dataKey="saldoAcumulado"
-                name="Saldo acumulado"
-                stroke={CHART.saldo}
-                strokeWidth={2.5}
-                dot={{ r: 3, fill: CHART.saldo }}
-                legendType="none"
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
+        <div className="relative h-80 w-full min-h-[20rem]">
+          {chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {busca.trim()
+                ? "Nenhum resultado para esta busca na projeção."
+                : "Sem movimento no período para projetar."}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={320}>
+              <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART.grid} />
+                <XAxis dataKey="label" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v: number) =>
+                    Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(Math.round(v))
+                  }
+                />
+                <ReferenceLine y={0} stroke={CHART.grid} />
+                <Tooltip
+                  formatter={(v: number, name: string) => [
+                    formatBRL(name === "Saídas" ? Math.abs(v) : v),
+                    name,
+                  ]}
+                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                />
+                <Bar dataKey="entradas" name="Entradas" fill={CHART.entradas} radius={[4, 4, 0, 0]} legendType="none" />
+                <Bar dataKey="saidasNeg" name="Saídas" fill={TERRACOTA} radius={[0, 0, 4, 4]} legendType="none" />
+                <Line
+                  type="monotone"
+                  dataKey="saldoAcumulado"
+                  name="Saldo acumulado"
+                  stroke={CHART.saldo}
+                  strokeWidth={2.5}
+                  dot={{ r: 3, fill: CHART.saldo }}
+                  legendType="none"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
