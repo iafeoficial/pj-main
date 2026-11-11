@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   addMonths,
   eachDayOfInterval,
@@ -19,6 +27,8 @@ import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const CALENDAR_WIDTH = 280;
+const CALENDAR_EST_HEIGHT = 320;
 
 export interface DatePickerProps {
   value: string;
@@ -27,6 +37,24 @@ export interface DatePickerProps {
   className?: string;
   placeholder?: string;
   id?: string;
+}
+
+type MenuPos = { top: number; left: number };
+
+function measureCalendarPos(el: HTMLElement): MenuPos {
+  const r = el.getBoundingClientRect();
+  const gap = 4;
+  const spaceBelow = window.innerHeight - r.bottom - gap;
+  const spaceAbove = r.top - gap;
+  const preferUp = spaceBelow < CALENDAR_EST_HEIGHT && spaceAbove > spaceBelow;
+  const top = preferUp
+    ? Math.max(8, r.top - gap - CALENDAR_EST_HEIGHT)
+    : r.bottom + gap;
+  const left = Math.max(
+    8,
+    Math.min(r.left, window.innerWidth - CALENDAR_WIDTH - 8)
+  );
+  return { top, left };
 }
 
 function parseIso(iso: string): Date | null {
@@ -64,8 +92,10 @@ export function DatePicker({
   const autoId = useId();
   const fieldId = id ?? autoId;
   const rootRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const focused = useRef(false);
   const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<MenuPos | null>(null);
   const selected = parseIso(value);
   const display = selected ? format(selected, "dd/MM/yyyy", { locale: ptBR }) : "";
   const [text, setText] = useState(display);
@@ -80,12 +110,30 @@ export function DatePicker({
     if (parsed) setViewMonth(parsed);
   }, [value]);
 
+  const updateMenuPos = useCallback(() => {
+    const el = rootRef.current;
+    if (!el || !open) return;
+    setMenuPos(measureCalendarPos(el));
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateMenuPos();
+    window.addEventListener("resize", updateMenuPos);
+    window.addEventListener("scroll", updateMenuPos, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPos);
+      window.removeEventListener("scroll", updateMenuPos, true);
+    };
+  }, [open, updateMenuPos]);
+
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      if (rootRef.current?.contains(t) || popoverRef.current?.contains(t)) return;
+      setOpen(false);
+      setMenuPos(null);
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
@@ -97,6 +145,7 @@ export function DatePicker({
       setText(format(d, "dd/MM/yyyy"));
       setViewMonth(d);
       setOpen(false);
+      setMenuPos(null);
     },
     [onChange]
   );
@@ -104,6 +153,7 @@ export function DatePicker({
   function clear() {
     setText("");
     setOpen(false);
+    setMenuPos(null);
     if (value) onChange("");
   }
 
@@ -126,6 +176,18 @@ export function DatePicker({
     if (iso !== value) onChange(iso);
   }
 
+  function toggleOpen() {
+    if (disabled) return;
+    setOpen((o) => {
+      if (o) {
+        setMenuPos(null);
+        return false;
+      }
+      if (rootRef.current) setMenuPos(measureCalendarPos(rootRef.current));
+      return true;
+    });
+  }
+
   const monthStart = startOfMonth(viewMonth);
   const monthEnd = endOfMonth(viewMonth);
   const days = eachDayOfInterval({
@@ -133,6 +195,106 @@ export function DatePicker({
     end: endOfWeek(monthEnd, { locale: ptBR }),
   });
   const monthLabel = format(viewMonth, "MMMM yyyy", { locale: ptBR });
+
+  const calendar =
+    open && menuPos
+      ? createPortal(
+          <div
+            ref={popoverRef}
+            role="dialog"
+            aria-label="Calendário"
+            style={{
+              position: "fixed",
+              top: menuPos.top,
+              left: menuPos.left,
+              width: CALENDAR_WIDTH,
+              zIndex: 200,
+            }}
+            className="rounded-lg border border-border bg-card p-3 shadow-lg"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <button
+                type="button"
+                className="btn-ghost btn-sm h-8 w-8 p-0"
+                aria-label="Mês anterior"
+                onClick={() => setViewMonth((m) => subMonths(m, 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="text-sm font-medium capitalize">{monthLabel}</span>
+              <button
+                type="button"
+                className="btn-ghost btn-sm h-8 w-8 p-0"
+                aria-label="Próximo mês"
+                onClick={() => setViewMonth((m) => addMonths(m, 1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mb-1 grid grid-cols-7 gap-0.5">
+              {WEEKDAYS.map((d) => (
+                <div
+                  key={d}
+                  className="py-1 text-center text-[11px] font-medium text-muted-foreground"
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-0.5" role="grid">
+              {days.map((day) => {
+                const outside = !isSameMonth(day, viewMonth);
+                const selectedDay = selected && isSameDay(day, selected);
+                const today = isToday(day);
+
+                return (
+                  <button
+                    key={day.toISOString()}
+                    type="button"
+                    role="gridcell"
+                    aria-selected={selectedDay || undefined}
+                    aria-current={today ? "date" : undefined}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => selectDate(day)}
+                    className={cn(
+                      "h-8 rounded-md text-sm transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      outside && "text-muted-foreground/40",
+                      !outside && !selectedDay && "hover:bg-accent hover:text-accent-foreground",
+                      selectedDay && "bg-primary text-primary-foreground hover:bg-primary/90",
+                      today && !selectedDay && "font-semibold text-primary"
+                    )}
+                  >
+                    {format(day, "d")}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-2 flex gap-1 border-t border-border pt-2">
+              <button
+                type="button"
+                className="btn-ghost btn-sm h-7 flex-1 text-xs"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => selectDate(new Date())}
+              >
+                Hoje
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm h-7 flex-1 text-xs"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={clear}
+              >
+                Limpar
+              </button>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
 
   return (
     <div ref={rootRef} className={cn("relative", className)}>
@@ -164,9 +326,11 @@ export function DatePicker({
               e.preventDefault();
               commit(text);
               setOpen(false);
+              setMenuPos(null);
             } else if (e.key === "Escape") {
               setText(display);
               setOpen(false);
+              setMenuPos(null);
             }
           }}
           className="min-w-0 flex-1 bg-transparent py-1 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
@@ -178,100 +342,13 @@ export function DatePicker({
           aria-expanded={open}
           aria-label="Abrir calendário"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggleOpen}
           className="btn-ghost h-7 w-7 shrink-0 p-0"
         >
           <Calendar className="h-4 w-4 text-muted-foreground" aria-hidden />
         </button>
       </div>
-
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Calendário"
-          className="absolute left-0 top-full z-[60] mt-1 w-[280px] rounded-lg border border-border bg-card p-3 shadow-lg"
-        >
-          <div className="mb-2 flex items-center justify-between">
-            <button
-              type="button"
-              className="btn-ghost btn-sm h-8 w-8 p-0"
-              aria-label="Mês anterior"
-              onClick={() => setViewMonth((m) => subMonths(m, 1))}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm font-medium capitalize">{monthLabel}</span>
-            <button
-              type="button"
-              className="btn-ghost btn-sm h-8 w-8 p-0"
-              aria-label="Próximo mês"
-              onClick={() => setViewMonth((m) => addMonths(m, 1))}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="mb-1 grid grid-cols-7 gap-0.5">
-            {WEEKDAYS.map((d) => (
-              <div
-                key={d}
-                className="py-1 text-center text-[11px] font-medium text-muted-foreground"
-              >
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-0.5" role="grid">
-            {days.map((day) => {
-              const outside = !isSameMonth(day, viewMonth);
-              const selectedDay = selected && isSameDay(day, selected);
-              const today = isToday(day);
-
-              return (
-                <button
-                  key={day.toISOString()}
-                  type="button"
-                  role="gridcell"
-                  aria-selected={selectedDay || undefined}
-                  aria-current={today ? "date" : undefined}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => selectDate(day)}
-                  className={cn(
-                    "h-8 rounded-md text-sm transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    outside && "text-muted-foreground/40",
-                    !outside && !selectedDay && "hover:bg-accent hover:text-accent-foreground",
-                    selectedDay && "bg-primary text-primary-foreground hover:bg-primary/90",
-                    today && !selectedDay && "font-semibold text-primary"
-                  )}
-                >
-                  {format(day, "d")}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-2 flex gap-1 border-t border-border pt-2">
-            <button
-              type="button"
-              className="btn-ghost btn-sm h-7 flex-1 text-xs"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => selectDate(new Date())}
-            >
-              Hoje
-            </button>
-            <button
-              type="button"
-              className="btn-ghost btn-sm h-7 flex-1 text-xs"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={clear}
-            >
-              Limpar
-            </button>
-          </div>
-        </div>
-      )}
+      {calendar}
     </div>
   );
 }
