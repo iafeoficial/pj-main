@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, Pencil, Plus, Trash2, CheckCircle2, Mail } from "lucide-react";
 import type { Empresa } from "@/types/domain";
 import { empresaService } from "@/data/services";
@@ -46,6 +46,31 @@ const EMPTY: FormState = {
   ...EMPTY_ENDERECO,
 };
 
+const DRAFT_NOVA_KEY = "financas_pj:draft:nova-empresa";
+
+type NovaEmpresaDraft = { open: boolean; form: FormState };
+
+function lerDraftNova(): NovaEmpresaDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_NOVA_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as NovaEmpresaDraft;
+    if (!parsed || typeof parsed !== "object" || !parsed.form) return null;
+    return { open: !!parsed.open, form: { ...EMPTY, ...parsed.form } };
+  } catch {
+    return null;
+  }
+}
+
+function gravarDraftNova(draft: NovaEmpresaDraft | null) {
+  try {
+    if (!draft) sessionStorage.removeItem(DRAFT_NOVA_KEY);
+    else sessionStorage.setItem(DRAFT_NOVA_KEY, JSON.stringify(draft));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function EmpresasPage() {
   const { empresas, empresaAtiva, version, refreshEmpresas, setEmpresaAtiva } = useEmpresa();
   const { user } = useAuth();
@@ -68,22 +93,46 @@ export function EmpresasPage() {
     }
   }
 
-  const [modalOpen, setModalOpen] = useState(false);
+  const draftInicial = useMemo(() => lerDraftNova(), []);
+  const [modalOpen, setModalOpen] = useState(() => !!draftInicial?.open);
   const [editing, setEditing] = useState<Empresa | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY);
+  const [form, setForm] = useState<FormState>(() => draftInicial?.form ?? EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [toDelete, setToDelete] = useState<Empresa | null>(null);
 
   const sorted = useMemo(() => empresas, [empresas]);
 
-  function openCreate() {
+  // Rascunho de "Nova empresa": sobrevive a remount (ex.: foco na aba / refresh de sessão).
+  useEffect(() => {
+    if (editing) return;
+    if (!modalOpen) {
+      gravarDraftNova(null);
+      return;
+    }
+    gravarDraftNova({ open: true, form });
+  }, [modalOpen, form, editing]);
+
+  function fecharModal() {
+    const eraNova = !editing;
+    setModalOpen(false);
     setEditing(null);
-    setForm(EMPTY);
+    setErrors({});
+    if (eraNova) {
+      setForm(EMPTY);
+      gravarDraftNova(null);
+    }
+  }
+
+  function openCreate() {
+    const draft = lerDraftNova();
+    setEditing(null);
+    setForm(draft?.form ?? EMPTY);
     setErrors({});
     setModalOpen(true);
   }
 
   function openEdit(e: Empresa) {
+    gravarDraftNova(null);
     setEditing(e);
     setForm({
       cnpj: e.cnpj,
@@ -126,9 +175,12 @@ export function EmpresasPage() {
         const created = await empresaService.create(form);
         if (!empresaAtiva) setEmpresaAtiva(created.id);
         notify("Empresa cadastrada com sucesso.");
+        gravarDraftNova(null);
+        setForm(EMPTY);
       }
       await refreshEmpresas();
       setModalOpen(false);
+      setEditing(null);
     } catch (e) {
       notify((e as Error).message || "Erro ao salvar empresa.", "error");
     }
@@ -276,10 +328,10 @@ export function EmpresasPage() {
         open={modalOpen}
         title={editing ? "Editar empresa" : "Nova empresa"}
         width="max-w-2xl"
-        onClose={() => setModalOpen(false)}
+        onClose={fecharModal}
         footer={
           <>
-            <button className="btn-outline" onClick={() => setModalOpen(false)}>
+            <button className="btn-outline" onClick={fecharModal}>
               Cancelar
             </button>
             <button className="btn-primary" onClick={save}>

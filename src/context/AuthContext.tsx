@@ -80,13 +80,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
 
-  async function carregarProfile(userId: string | undefined) {
+  async function carregarProfile(userId: string | undefined, opts?: { silent?: boolean }) {
     if (!userId || !supabase) {
       setProfile(null);
       setProfileLoading(false);
       return;
     }
-    setProfileLoading(true);
+    // silent: não mostra o Gate spinner (ex.: foco na aba / TOKEN_REFRESHED) —
+    // evita desmontar modais e perder formulários em preenchimento.
+    if (!opts?.silent) setProfileLoading(true);
     try {
       const p = await plataformaService.getMeuProfile();
       setProfile(p);
@@ -102,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         createdAt: new Date().toISOString(),
       });
     } finally {
-      setProfileLoading(false);
+      if (!opts?.silent) setProfileLoading(false);
     }
   }
 
@@ -134,21 +136,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === "PASSWORD_RECOVERY") setPasswordRecovery(true);
-      // TOKEN_REFRESHED: atualiza a sessão (novo JWT) sem cascata desnecessária —
-      // EmpresaContext depende de user.id, estável neste evento.
+      // Ao voltar para a aba o Supabase costuma emitir TOKEN_REFRESHED / SIGNED_IN.
+      // Mesmo usuário → atualiza JWT/perfil em silêncio, sem desmontar a árvore (Gate).
       setSession((prev) => {
-        if (
-          event === "TOKEN_REFRESHED" &&
-          prev?.user?.id &&
-          s?.user?.id === prev.user.id
-        ) {
+        const sameUser = !!(prev?.user?.id && s?.user?.id === prev.user.id);
+        if (event === "TOKEN_REFRESHED" && sameUser) {
           return s;
         }
-        if (event !== "TOKEN_REFRESHED") {
-          void carregarProfile(s?.user?.id);
-        } else if (s?.user?.id !== prev?.user?.id) {
-          void carregarProfile(s?.user?.id);
-        }
+        void carregarProfile(s?.user?.id, { silent: sameUser });
         return s;
       });
       setCurrentUser(s?.user.email ?? null);
