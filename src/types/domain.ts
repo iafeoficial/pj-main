@@ -72,6 +72,8 @@ export interface Categoria extends OwnedEntity {
   ativo: boolean;
   /** Grupo pai (nullable). Só categorias-folha entram em lançamentos. */
   grupoId: string | null;
+  /** Rótulo livre opcional para mapeamento na DRE / plano contábil. */
+  contaDre: string | null;
 }
 
 // ---- Centro de Custo ----

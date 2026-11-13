@@ -157,13 +157,20 @@ export const categoriaService = {
   },
   async create(
     empresaId: string,
-    data: { nome: string; tipo: CategoriaTipo; ativo: boolean; grupoId?: string | null }
+    data: {
+      nome: string;
+      tipo: CategoriaTipo;
+      ativo: boolean;
+      grupoId?: string | null;
+      contaDre?: string | null;
+    }
   ) {
     const c = await categoriaTable.create(empresaId, {
       nome: data.nome,
       tipo: data.tipo,
       ativo: data.ativo,
       grupoId: data.grupoId ?? null,
+      contaDre: data.contaDre?.trim() ? data.contaDre.trim() : null,
     });
     await logAudit({ empresaId, entidade: "Categoria", entidadeId: c.id, acao: "inclusao", descricao: `Categoria "${c.nome}" criada.` });
     return c;

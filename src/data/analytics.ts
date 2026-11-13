@@ -5,7 +5,6 @@ import { monthRange, roundBRL } from "@/lib/utils";
 import { transferenciaService } from "./transferencias";
 import { pagamentoContaTable } from "./repos";
 import {
-  categoriaGrupoService,
   categoriaService,
   centroCustoService,
   contaFinanceiraService,
@@ -565,21 +564,29 @@ export interface DREData {
   detalhe: DREDetalheLinha[];
 }
 
+function contaDreTexto(contaDre: string | null | undefined): string | null {
+  const t = contaDre?.trim();
+  return t ? t : null;
+}
+
+function chaveContaDre(texto: string): string {
+  return `conta:${texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()}`;
+}
+
+/** Hierarquia DRE: só categorias com Conta do DRE; agrupa por esse texto. */
 function buildDREHierarquia(
   itens: { valor: number; categoriaId: string | null }[],
-  categorias: { id: string; nome: string; grupoId: string | null }[],
-  grupos: { id: string; nome: string }[]
+  categorias: { id: string; nome: string; contaDre: string | null }[]
 ): DREGrupoLinha[] {
   const catMap = new Map(categorias.map((c) => [c.id, c]));
-  const grupoNome = new Map(grupos.map((g) => [g.id, g.nome]));
 
-  // grupoKey → categoriaKey → acumulado
+  // contaDreKey → categoriaKey → acumulado
   const bucket = new Map<
     string,
     { rotulo: string; cats: Map<string, DRECategoriaLinha> }
   >();
 
-  function ensureGrupo(key: string, rotulo: string) {
+  function ensureConta(key: string, rotulo: string) {
     let g = bucket.get(key);
     if (!g) {
       g = { rotulo, cats: new Map() };
@@ -590,14 +597,14 @@ function buildDREHierarquia(
 
   for (const it of itens) {
     const cat = it.categoriaId ? catMap.get(it.categoriaId) : undefined;
-    const grupoKey = cat?.grupoId ?? "sem-grupo";
-    const grupoRotulo = cat?.grupoId
-      ? grupoNome.get(cat.grupoId) ?? "Grupo removido"
-      : "Sem grupo";
-    const catKey = it.categoriaId ?? "sem";
-    const catRotulo = cat?.nome ?? (it.categoriaId ? "—" : "Sem categoria");
+    const conta = contaDreTexto(cat?.contaDre);
+    if (!cat || !conta) continue;
 
-    const g = ensureGrupo(grupoKey, grupoRotulo);
+    const contaKey = chaveContaDre(conta);
+    const catKey = cat.id;
+    const catRotulo = cat.nome;
+
+    const g = ensureConta(contaKey, conta);
     const cur = g.cats.get(catKey) ?? { chave: catKey, rotulo: catRotulo, total: 0, qtd: 0 };
     cur.total += it.valor;
     cur.qtd += 1;
@@ -614,12 +621,7 @@ function buildDREHierarquia(
         categorias: categoriasLinha,
       };
     })
-    .sort((a, b) => {
-      // "Sem grupo" por último
-      if (a.chave === "sem-grupo") return 1;
-      if (b.chave === "sem-grupo") return -1;
-      return b.total - a.total;
-    });
+    .sort((a, b) => b.total - a.total);
 }
 
 function shiftIsoYear(iso: string, delta: number): string {
@@ -627,9 +629,9 @@ function shiftIsoYear(iso: string, delta: number): string {
   return `${y + delta}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-/** Classifica despesa pelo nome do grupo/categoria (sem schema novo). */
-function classeDespesa(grupo: string, categoria: string): "cmv" | "imposto" | "opex" {
-  const t = `${grupo} ${categoria}`.toLowerCase();
+/** Classifica despesa pela Conta do DRE (+ nome da categoria). */
+function classeDespesa(contaDre: string, categoria: string): "cmv" | "imposto" | "opex" {
+  const t = `${contaDre} ${categoria}`.toLowerCase();
   if (/cmv|custo das? vendas|custo de merc|cogs|mercadoria revend/.test(t)) return "cmv";
   if (/imposto|tribut|juro|encargo|inss|iss\b|icms|pis|cofins|irpj|csll|iof|taxa banc/.test(t)) {
     return "imposto";
@@ -730,51 +732,68 @@ export async function getDRE(empresaId: string, inicio: string, fim: string): Pr
   const prevFim = shiftIsoYear(fim, -1);
   const meses = mesesCompetencia(inicio, fim);
 
-  const [pagarAll, receberAll, categorias, grupos] = await Promise.all([
+  const [pagarAll, receberAll, categorias] = await Promise.all([
     contaPagarService.list(empresaId),
     contaReceberService.list(empresaId),
     categoriaService.list(empresaId),
-    categoriaGrupoService.list(empresaId),
   ]);
 
   const catMap = new Map(categorias.map((c) => [c.id, c]));
-  const grupoMap = new Map(grupos.map((g) => [g.id, g]));
+  const catsDre = categorias.map((c) => ({
+    id: c.id,
+    nome: c.nome,
+    contaDre: c.contaDre ?? null,
+  }));
+
+  const temContaDre = (categoriaId: string | null) => {
+    if (!categoriaId) return false;
+    return !!contaDreTexto(catMap.get(categoriaId)?.contaDre);
+  };
 
   const pagarPeriodo = pagarAll.filter(
-    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, inicio, fim)
+    (c) =>
+      isAtiva(c.status) &&
+      entraNoResultado(c) &&
+      inRange(c.dataCompetencia, inicio, fim) &&
+      temContaDre(c.categoriaId)
   );
   const receberPeriodo = receberAll.filter(
-    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, inicio, fim)
+    (c) =>
+      isAtiva(c.status) &&
+      entraNoResultado(c) &&
+      inRange(c.dataCompetencia, inicio, fim) &&
+      temContaDre(c.categoriaId)
   );
   const pagarAnt = pagarAll.filter(
-    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, prevInicio, prevFim)
+    (c) =>
+      isAtiva(c.status) &&
+      entraNoResultado(c) &&
+      inRange(c.dataCompetencia, prevInicio, prevFim) &&
+      temContaDre(c.categoriaId)
   );
   const receberAnt = receberAll.filter(
-    (c) => isAtiva(c.status) && entraNoResultado(c) && inRange(c.dataCompetencia, prevInicio, prevFim)
+    (c) =>
+      isAtiva(c.status) &&
+      entraNoResultado(c) &&
+      inRange(c.dataCompetencia, prevInicio, prevFim) &&
+      temContaDre(c.categoriaId)
   );
-
-  const gruposReceita = grupos.filter((g) => g.tipo === "receita");
-  const gruposDespesa = grupos.filter((g) => g.tipo === "despesa");
 
   const receitas = buildDREHierarquia(
     receberPeriodo.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
-    categorias,
-    gruposReceita
+    catsDre
   );
   const despesas = buildDREHierarquia(
     pagarPeriodo.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
-    categorias,
-    gruposDespesa
+    catsDre
   );
   const receitasAnt = buildDREHierarquia(
     receberAnt.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
-    categorias,
-    gruposReceita
+    catsDre
   );
   const despesasAnt = buildDREHierarquia(
     pagarAnt.map((c) => ({ valor: c.valor, categoriaId: c.categoriaId })),
-    categorias,
-    gruposDespesa
+    catsDre
   );
 
   const totalReceitas = receitas.reduce((s, r) => s + r.total, 0);
@@ -796,8 +815,9 @@ export async function getDRE(empresaId: string, inicio: string, fim: string): Pr
   ) => {
     for (const c of lista) {
       const cat = c.categoriaId ? catMap.get(c.categoriaId) : undefined;
-      const grupo = cat?.grupoId ? grupoMap.get(cat.grupoId) : undefined;
-      const classe = classeDespesa(grupo?.nome ?? "", cat?.nome ?? "");
+      const conta = contaDreTexto(cat?.contaDre);
+      if (!conta) continue;
+      const classe = classeDespesa(conta, cat?.nome ?? "");
       add(classe, c.valor);
     }
   };
@@ -821,19 +841,15 @@ export async function getDRE(empresaId: string, inicio: string, fim: string): Pr
     valor: c.valor,
     mes: c.dataCompetencia.slice(0, 7),
     categoriaId: c.categoriaId,
-    grupoId: c.categoriaId ? catMap.get(c.categoriaId)?.grupoId ?? null : null,
   }));
   const pagarMensal = pagarPeriodo.map((c) => {
     const cat = c.categoriaId ? catMap.get(c.categoriaId) : undefined;
+    const conta = contaDreTexto(cat?.contaDre) ?? "";
     return {
       valor: c.valor,
       mes: c.dataCompetencia.slice(0, 7),
       categoriaId: c.categoriaId,
-      grupoId: cat?.grupoId ?? null,
-      classe: classeDespesa(
-        cat?.grupoId ? grupoMap.get(cat.grupoId)?.nome ?? "" : "",
-        cat?.nome ?? ""
-      ),
+      classe: classeDespesa(conta, cat?.nome ?? ""),
     };
   });
 

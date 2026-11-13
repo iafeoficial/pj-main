@@ -328,11 +328,12 @@ o magic link autenticava e a pessoa via só a empresa antiga.
 ## ADR-032 — DRE visual (waterfall + detalhe YoY)
 **Decisão:** a tela DRE segue o layout do manual (waterfall Receita→Lucro líquido e tabela com
 % da receita, variação vs. período equivalente do ano anterior e sparkline mensal). Os filtros
-Início/Fim permanecem. CMV / despesas operacionais / impostos são classificados pelo **nome**
-do grupo/categoria (heurística), sem coluna nova no schema — o restante das despesas cai em opex.
-**Motivo:** espelhar a identidade visual sem inventar números; o cálculo continua em cima de
-contas a pagar/receber por competência.
-**Implementação:** `getDRE` em `analytics.ts`; `DREPage.tsx`.
+Início/Fim permanecem. A hierarquia e a classificação CMV / opex / impostos usam **somente**
+`conta_dre` da categoria (+ heurística no texto da Conta do DRE e no nome da categoria). Lançamento
+sem categoria ou sem Conta do DRE **não entra** na DRE (sem fallback para grupo).
+**Motivo:** espelhar o mapeamento contábil IAFÉ; o grupo DRE do cadastro organiza o cadastro, não
+a montagem do demonstrativo.
+**Implementação:** `getDRE` em `analytics.ts`; `DREPage.tsx`; coluna `categorias.conta_dre`.
 
 ## ADR-033 — Período de acesso, bloqueio e guia leigo
 **Decisão:** o fluxo criar conta → criar empresa permanece. Novas colunas em `empresas`
@@ -352,6 +353,17 @@ abertura + baixas/recebimentos/transferências com data ≤ fim do filtro. Dashb
 telas continuam com `getSaldosContas` (saldo atual).
 **Motivo:** o usuário espera que o filtro Início/Fim altere os balões só nessa tela.
 **Implementação:** `getSaldosContasAte` em `analytics.ts`; `FluxoCaixaPage.tsx`.
+
+## ADR-035 — Conta do DRE e importação de categorias
+**Decisão:** categorias-folha ganham `conta_dre` (texto opcional) para rótulo de mapeamento
+DRE/plano contábil, independente do grupo. Em `/categorias`, **Importar planilha** baixa o
+modelo `.xlsx` (colunas `Nome`, `Grupo`, `Tipo`, `Situação`, `Conta do DRE`) e aceita upload
+do arquivo preenchido: preview, cria grupos ausentes pelo nome+tipo, cria categorias novas;
+duplicata = mesmo nome+tipo (pula). A tela DRE (ADR-032) depende dessa coluna para incluir o
+lançamento.
+**Motivo:** alinhar o cadastro ao arquivo IAFÉ de categorias e permitir carga em lote.
+**Implementação:** migration `0036_categoria_conta_dre.sql`; `categoriaPlanilha.ts`;
+`CategoriasPage`.
 
 ## ADR-006 — Invalidação de cache via `version`/`bumpData`
 **Decisão:** leituras são memoizadas com dependência em `version` do `EmpresaContext`; mutações
